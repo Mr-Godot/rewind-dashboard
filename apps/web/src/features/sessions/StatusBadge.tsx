@@ -1,19 +1,19 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 
 type SessionState = 'working' | 'waiting' | 'inactive'
 
 const SPINNER_CHARS = ['\u280B', '\u2819', '\u2839', '\u2838', '\u283C', '\u2834', '\u2826', '\u2827', '\u2807', '\u280F']
 
 function BrailleSpinner({ offset }: { offset: number }) {
+  // Start phase-shifted by `offset`, then advance one frame per tick. Avoids
+  // Date.now() during render (impure) \u2014 the per-tick increment is equivalent.
   const [frame, setFrame] = useState(offset % SPINNER_CHARS.length)
-  const startRef = useRef(Date.now())
   useEffect(() => {
     const id = setInterval(() => {
-      const elapsed = Date.now() - startRef.current
-      setFrame((offset + Math.floor(elapsed / 80)) % SPINNER_CHARS.length)
+      setFrame((f) => (f + 1) % SPINNER_CHARS.length)
     }, 80)
     return () => clearInterval(id)
-  }, [offset])
+  }, [])
   return <span>{SPINNER_CHARS[frame]}</span>
 }
 

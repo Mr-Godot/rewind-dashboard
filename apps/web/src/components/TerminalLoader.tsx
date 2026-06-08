@@ -86,7 +86,7 @@ export function TerminalLoader() {
   }, [])
 
   return (
-    <div className="flex flex-col items-center justify-center py-24">
+    <div className="flex flex-col items-start py-8">
       {/* Main spinner + phrase */}
       <div className="flex items-center gap-3 font-mono text-lg">
         <span className="text-matrix text-2xl w-6 text-center">{SPINNER[spinnerIdx]}</span>

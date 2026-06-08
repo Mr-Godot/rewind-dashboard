@@ -9,11 +9,18 @@ export const getSessionDetail = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const filePath = findSessionFile(data.sessionId, data.projectPath)
     if (!filePath) {
-      throw new Error(`Session not found: ${data.sessionId}`)
+      // The JSONL was deleted/rotated after the list was cached. Return a typed
+      // result so the UI can show a graceful state instead of a raw error.
+      return { notFound: true as const, sessionId: data.sessionId }
     }
 
     const projectName = extractProjectName(data.projectPath)
-    return parseDetail(filePath.path, data.sessionId, data.projectPath, projectName)
+    try {
+      return await parseDetail(filePath.path, data.sessionId, data.projectPath, projectName)
+    } catch {
+      // File vanished mid-parse or is corrupt/truncated.
+      return { notFound: true as const, sessionId: data.sessionId }
+    }
   })
 
 function findSessionFile(

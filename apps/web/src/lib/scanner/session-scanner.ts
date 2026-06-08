@@ -4,6 +4,7 @@ import { getClaudeDir, getProjectsDir, extractSessionId } from '../utils/claude-
 import { scanProjects } from './project-scanner'
 import { isSessionActive } from './active-detector'
 import { parseSummary } from '../parsers/session-parser'
+import { getCacheDir } from '../cache/disk-cache'
 import type { SessionSummary } from '../parsers/types'
 
 /** Read Claude Code's /rename names from ~/.claude/sessions/*.json */
@@ -38,6 +39,53 @@ const summaryCache = new Map<
   { mtimeMs: number; summary: SessionSummary }
 >()
 
+// Disk persistence for summaryCache. The in-memory Map is cleared on every
+// server start / HMR reload, which forces a full re-parse of every session on
+// first load ("loads forever"). Persisting it to disk lets cold starts reuse
+// prior parse results — entries are still mtime-guarded in the scan loop, so
+// parsing/naming/sort behavior is unchanged. Bump version to invalidate.
+const SUMMARY_CACHE_VERSION = 2
+let summaryCacheHydrated = false
+
+function summaryCachePath(): string {
+  return path.join(getCacheDir(), 'session-summaries.json')
+}
+
+function hydrateSummaryCache(): void {
+  if (summaryCacheHydrated) return
+  summaryCacheHydrated = true
+  try {
+    const raw = fs.readFileSync(summaryCachePath(), 'utf-8')
+    const parsed = JSON.parse(raw) as {
+      version?: number
+      entries?: Record<string, { mtimeMs: number; summary: SessionSummary }>
+    }
+    if (parsed.version !== SUMMARY_CACHE_VERSION || !parsed.entries) return
+    for (const [sessionId, entry] of Object.entries(parsed.entries)) {
+      if (entry && typeof entry.mtimeMs === 'number' && entry.summary) {
+        summaryCache.set(sessionId, { mtimeMs: entry.mtimeMs, summary: entry.summary })
+      }
+    }
+  } catch {
+    // No cache yet, or it is corrupt/outdated — start cold. Never fatal.
+  }
+}
+
+function persistSummaryCache(): void {
+  try {
+    const dir = getCacheDir()
+    fs.mkdirSync(dir, { recursive: true })
+    const entries: Record<string, { mtimeMs: number; summary: SessionSummary }> = {}
+    for (const [sessionId, entry] of summaryCache) entries[sessionId] = entry
+    const cachePath = summaryCachePath()
+    const tmpPath = `${cachePath}.tmp`
+    fs.writeFileSync(tmpPath, JSON.stringify({ version: SUMMARY_CACHE_VERSION, entries }), 'utf-8')
+    fs.renameSync(tmpPath, cachePath)
+  } catch {
+    // Cache write failure must never break scanning.
+  }
+}
+
 /** Determine session state from active status and file freshness.
  * If isSessionActive returned true, the session is working.
  * "waiting" is reserved for future use with process-level detection. */
@@ -50,6 +98,7 @@ function getSessionState(isActive: boolean, _mtimeMs: number): 'working' | 'wait
  * Used by both public APIs below.
  */
 async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
+  hydrateSummaryCache()
   const projects = await scanProjects()
   const claudeNames = readClaudeSessionNames()
   const summaries: SessionSummaryWithPath[] = []
@@ -107,6 +156,14 @@ async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
     (a, b) =>
       new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime(),
   )
+
+  // Prune cache entries for sessions that no longer exist (also caps the
+  // in-memory Map), then persist so the next cold start is fast.
+  const seen = new Set(summaries.map((s) => s.sessionId))
+  for (const key of summaryCache.keys()) {
+    if (!seen.has(key)) summaryCache.delete(key)
+  }
+  persistSummaryCache()
 
   return summaries
 }

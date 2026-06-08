@@ -197,7 +197,7 @@ npx vite --port 3030      # dev server
 npx vitest                 # tests
 ```
 
-> **Note**: Production build has a known TanStack Start issue on Node v24. Use dev mode (`npx vite`).
+> **Note**: Both dev mode (`npx vite --port 3030`) and the production build (`npm run build` then `npm start`) work. The in-app **Launch session** button only works in dev mode, since its endpoint runs as Vite dev-server middleware.
 
 ---
 

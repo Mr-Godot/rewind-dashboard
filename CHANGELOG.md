@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.0
+
+### Added
+- **One-click launch** — resuming a session now launches immediately (removed the confirmation popup)
+- **Progressive session loading** — the first page renders fast and the next page is prefetched in the background; the session summary cache now persists to disk so cold starts stay quick even with thousands of sessions
+
+### Fixed
+- **Production build** — fixed the production SSR crash (`jsxDEV is not a function`); `npm run build` + `npm start` now serve correctly
+- **Graceful missing sessions** — opening a deleted or rotated session shows a friendly "this session no longer exists" state instead of a raw error, and removes the stale card from the list
+- **Terminal loader alignment** — the first-load loader is left-aligned with the rest of the page (no more centered "swing")
+- **Hydration warning** — silenced the theme-script hydration mismatch and removed render-purity issues (`Date.now()` / refs during render)
+- **macOS launch** — fixed Terminal escaping so session paths containing spaces work
+- **Search placeholder** — the `⌘K` shortcut hint now renders correctly
+
+### Internal
+- E2E suite updated for the current dashboard navigation; unit + E2E suites green in CI
+
 ## v1.03
 
 ### Added

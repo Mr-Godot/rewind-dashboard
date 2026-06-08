@@ -60,7 +60,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="flex px-4 pt-6 pb-3">
           <Link to="/dashboard" className="group flex items-baseline gap-1.5 tracking-tight">
             <span className="text-3xl font-black italic text-[#ff6600] neon-glow-brand transition-all group-hover:text-[#ff6600]/80">Rewind</span>
-            <span className="ml-1.5 text-xs text-gray-500">v1.03</span>
+            {appInfo?.version && <span className="ml-1.5 text-xs text-gray-500">v{appInfo.version}</span>}
           </Link>
         </div>
 

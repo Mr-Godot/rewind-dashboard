@@ -1,0 +1,85 @@
+{
+  "name": "rewind-dashboard",
+  "version": "1.4.0",
+  "description": "Local dashboard for Claude Code sessions — find, manage, and launch",
+  "type": "module",
+  "license": "MIT",
+  "author": "Godot Huard",
+  "homepage": "https://github.com/GodotH/rewind-dashboard",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GodotH/rewind-dashboard.git"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "dashboard",
+    "session",
+    "observability",
+    "ai",
+    "anthropic"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "claude-dashboard": "bin/cli.mjs",
+    "claude-session-dashboard": "bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node ./bin/cli.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:headed": "playwright test --headed",
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.75.0",
+    "@tanstack/react-router": "^1.159.5",
+    "@tanstack/react-start": "^1.159.5",
+    "date-fns": "^4.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "recharts": "^3.7.0",
+    "zod": "^4.3.6"
+  },
+  "overrides": {
+    "picomatch": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/vite": "^4.1.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/ui": "^4.0.18",
+    "eslint": "^9.39.2",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.0",
+    "happy-dom": "^20.6.1",
+    "jsdom": "^29.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.55.0",
+    "vite": "^7.3.0",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.0.18"
+  }
+}

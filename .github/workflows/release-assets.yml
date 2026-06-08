@@ -1,0 +1,68 @@
+name: Upload Release Assets
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  upload:
+    name: Build and Upload Release Tarball
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: ./apps/web
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ./apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Prune dev dependencies
+        run: npm prune --production
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release tarball
+        working-directory: ./apps/web
+        run: |
+          cp ../../LICENSE ./LICENSE
+          tar -czf "claude-session-dashboard-v${{ steps.version.outputs.version }}.tar.gz" \
+            bin/ \
+            dist/ \
+            node_modules/ \
+            package.json \
+            LICENSE
+
+      - name: Generate SLSA provenance attestation
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ./apps/web/claude-session-dashboard-v${{ steps.version.outputs.version }}.tar.gz
+
+      - name: Upload release tarball
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "claude-session-dashboard-v${{ steps.version.outputs.version }}.tar.gz" \
+            --repo "${{ github.repository }}"

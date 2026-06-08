@@ -42,6 +42,8 @@ Everything runs locally. Nothing phones home. We don't even know how to spell "t
 - **Token usage over time** — daily or weekly, broken down by model
 - **Hourly distribution** — discover that you apparently code at 2am more than you thought
 
+![Rewind — Dashboard](screenshots/rewind-dashboard.png)
+
 ### Conversation Viewer
 
 Full chat history on the session detail page — every message, tool call, and timestamp. For when you need to figure out what you asked Claude to do before your morning coffee.
@@ -61,9 +63,46 @@ Open **http://localhost:3030**. That's it.
 
 ### Prerequisites
 
-- **Node.js** v18+
+- **Node.js 18+** — install instructions per OS below
 - **Claude Code** installed — Rewind reads session data from `~/.claude/projects/`
 - At least one Claude Code session (go talk to Claude, we'll wait)
+
+<details>
+<summary><b>Install Node.js — Windows</b></summary>
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+Or grab the installer from [nodejs.org](https://nodejs.org/en/download). Then run the four Quick Start commands above in **PowerShell** or **Windows Terminal**.
+</details>
+
+<details>
+<summary><b>Install Node.js — macOS</b></summary>
+
+```bash
+brew install node
+```
+
+Or download from [nodejs.org](https://nodejs.org/en/download). Then run the four Quick Start commands above.
+</details>
+
+<details>
+<summary><b>Install Node.js — Linux</b></summary>
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y nodejs npm
+
+# …or via nvm (recommended for an up-to-date version)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+nvm install --lts
+```
+
+Then run the four Quick Start commands above.
+
+> Linux is fully supported (the app is pure Node + browser) but less battle-tested than Windows and macOS — bug reports welcome. The in-terminal **Launch** button uses `gnome-terminal`, `konsole`, or `xterm`.
+</details>
 
 ### Your first 30 seconds
 
@@ -207,4 +246,4 @@ Built on [claude-session-dashboard](https://github.com/dlupiak/claude-session-da
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2026 Godot Huard. Original dashboard Copyright (c) 2026 Dmytro Lupiak.
+[MIT](LICENSE) © 2026 Godot Huard.

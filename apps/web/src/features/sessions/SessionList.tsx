@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { paginatedSessionListQuery, activeSessionsQuery } from './sessions.queries'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
@@ -53,6 +53,18 @@ export function SessionList() {
     paginatedSessionListQuery({ page, pageSize, search, status, project, sort, starFirst, hasActive }),
   )
   const { data: metadata } = useQuery(metadataQuery)
+
+  // Progressive loading: once the current page is in, background-prefetch the
+  // NEXT page only (page+1) so advancing is instant. Pages beyond that stay
+  // lazy and load on demand; keepPreviousData keeps them smooth.
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    const totalPages = paginatedData?.totalPages ?? 1
+    if (page + 1 > totalPages) return
+    queryClient.prefetchQuery(
+      paginatedSessionListQuery({ page: page + 1, pageSize, search, status, project, sort, starFirst, hasActive }),
+    )
+  }, [queryClient, page, pageSize, search, status, project, sort, starFirst, hasActive, paginatedData?.totalPages])
 
   // Merge active status from fast-polling query
   const mergedSessions = useMemo(() => {

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
 import { usePinSession, useRenameSession } from '@/features/metadata/useMetadataMutations'
 import { LaunchButton } from '@/components/LaunchButton'
@@ -125,6 +125,14 @@ function SessionDetailPage() {
     sessionDetailQuery(sessionId, project, isActive),
   )
 
+  const queryClient = useQueryClient()
+  const isGone = !!detail && 'notFound' in detail
+  useEffect(() => {
+    // Session's file is gone — drop the stale/phantom card from the list now
+    // instead of waiting up to 30s for the next refetch.
+    if (isGone) queryClient.invalidateQueries({ queryKey: ['sessions'] })
+  }, [isGone, queryClient])
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -139,6 +147,23 @@ function SessionDetailPage() {
       <div className="py-12 text-center">
         <p className="text-sm text-red-400">
           Failed to load session: {error?.message ?? 'Not found'}
+        </p>
+        <Link
+          to="/sessions"
+          className="mt-2 inline-block text-sm text-brand-300 hover:underline"
+        >
+          Back to sessions
+        </Link>
+      </div>
+    )
+  }
+
+  if ('notFound' in detail) {
+    return (
+      <div className="py-12 text-center">
+        <p className="text-sm text-gray-300">this session no longer exists</p>
+        <p className="mt-1 text-xs text-gray-500">
+          its log file may have been deleted or rotated.
         </p>
         <Link
           to="/sessions"

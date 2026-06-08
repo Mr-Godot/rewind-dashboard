@@ -32,7 +32,7 @@ export function TerminalLoader() {
   const [spinnerIdx, setSpinnerIdx] = useState(0)
   const [phraseIdx, setPhraseIdx] = useState(0)
   const [dots, setDots] = useState('')
-  const [logLines, setLogLines] = useState<string[]>([])
+  const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([])
   const [cursorVisible, setCursorVisible] = useState(true)
   const logIdxRef = useRef(0)
 
@@ -70,8 +70,9 @@ export function TerminalLoader() {
     const addLine = () => {
       const line = LOG_LINES[logIdxRef.current % LOG_LINES.length]
       const formatted = line.replace('%d', String(Math.floor(Math.random() * 400) + 50))
+      const id = logIdxRef.current
       setLogLines((prev) => {
-        const next = [...prev, formatted]
+        const next = [...prev, { id, text: formatted }]
         return next.length > 6 ? next.slice(-6) : next
       })
       logIdxRef.current++
@@ -107,17 +108,17 @@ export function TerminalLoader() {
           <span>loading</span>
         </div>
         <div className="space-y-1">
-          {logLines.map((line, i) => {
+          {logLines.map((item, i) => {
             const isLatest = i === logLines.length - 1
             return (
               <div
-                key={`${logIdxRef.current - logLines.length + i}`}
+                key={item.id}
                 className="flex gap-2 transition-opacity duration-300"
                 style={{ opacity: isLatest ? 1 : 0.4 }}
               >
                 <span className="text-matrix/50 select-none">{'>'}</span>
                 <span className={isLatest ? 'text-matrix/90' : 'text-matrix/30'}>
-                  {line}
+                  {item.text}
                 </span>
               </div>
             )

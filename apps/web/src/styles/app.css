@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Default palette (dark) */
+  --color-gray-50: #f5f3ec;
+  --color-gray-100: #eae6dc;
+  --color-gray-200: #e0dbd0;
+  --color-gray-300: #cdc8b8;
+  --color-gray-400: #a39e90;
+  --color-gray-500: #7a7668;
+  --color-gray-600: #565349;
+  --color-gray-700: #3d3b36;
+  --color-gray-800: #2a2926;
+  --color-gray-900: #1c1c1a;
+  --color-gray-950: #141413;
+
+  /* Brand terracotta accent */
+  --color-brand-300: #f0b8a0;
+  --color-brand-400: #e09070;
+  --color-brand-500: #d97757;
+  --color-brand-600: #c4643f;
+  --color-brand-700: #a8512e;
+
+  /* Matrix green accent */
+  --color-matrix: #00ff41;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  /* Invert the gray scale so dark-numbered tokens become light surfaces */
+  --color-gray-50: #141413;
+  --color-gray-100: #1c1c1a;
+  --color-gray-200: #2a2926;
+  --color-gray-300: #3d3b36;
+  --color-gray-400: #565349;
+  --color-gray-500: #7a7668;
+  --color-gray-600: #a39e90;
+  --color-gray-700: #cdc8b8;
+  --color-gray-800: #e0dbd0;
+  --color-gray-900: #eae6dc;
+  --color-gray-950: #f5f3ec;
+}
+
+body {
+  background-color: var(--color-gray-950);
+  color: var(--color-gray-100);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+@keyframes neon-pulse {
+  0%, 100% { text-shadow: 0 0 4px rgba(217, 119, 87, 0.3), 0 0 12px rgba(217, 119, 87, 0.1); }
+  50% { text-shadow: 0 0 8px rgba(217, 119, 87, 0.5), 0 0 20px rgba(217, 119, 87, 0.2); }
+}
+
+.neon-glow-brand {
+  animation: neon-pulse 3s ease-in-out infinite;
+}
+
+@keyframes neon-pulse-green {
+  0%, 100% { text-shadow: 0 0 4px rgba(0, 255, 65, 0.3), 0 0 12px rgba(0, 255, 65, 0.1); }
+  50% { text-shadow: 0 0 8px rgba(0, 255, 65, 0.5), 0 0 20px rgba(0, 255, 65, 0.2); }
+}
+
+.neon-glow-green {
+  animation: neon-pulse-green 3s ease-in-out infinite;
+}
+
+@keyframes working-glow-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(0, 255, 65, 0.08), inset 0 0 3px rgba(0, 255, 65, 0.03); }
+  50% { box-shadow: 0 0 18px rgba(0, 255, 65, 0.25), inset 0 0 8px rgba(0, 255, 65, 0.06); }
+}
+
+.working-glow {
+  animation: working-glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes terminal-progress {
+  0% { width: 0%; margin-left: 0%; }
+  50% { width: 40%; margin-left: 30%; }
+  100% { width: 0%; margin-left: 100%; }
+}
+
+.animate-terminal-progress {
+  animation: terminal-progress 2s ease-in-out infinite;
+}

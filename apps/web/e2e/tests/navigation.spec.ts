@@ -1,22 +1,22 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Navigation', () => {
-  test('Given the app is loaded, When I visit the root URL, Then I am redirected to /sessions', async ({
+  test('Given the app is loaded, When I visit the root URL, Then I am redirected to /dashboard', async ({
     page,
   }) => {
     await page.goto('/')
-    await expect(page).toHaveURL(/\/sessions/)
+    await expect(page).toHaveURL(/\/dashboard/)
   })
 
-  test('Given I am on sessions, When I click "Stats", Then I see the Stats page', async ({
+  test('Given I am on sessions, When I click "Dashboard", Then I see the Dashboard page', async ({
     page,
   }) => {
     await page.goto('/sessions')
-    await page.click('a[href="/stats"]')
-    await expect(page).toHaveURL(/\/stats/)
-    await expect(page.locator('h1')).toContainText('Stats')
+    await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
+    await expect(page).toHaveURL(/\/dashboard/)
+    await expect(page.locator('h1')).toContainText('Dashboard')
     await page.screenshot({
-      path: 'e2e/screenshots/stats-page.png',
+      path: 'e2e/screenshots/dashboard-page.png',
       fullPage: true,
     })
   })

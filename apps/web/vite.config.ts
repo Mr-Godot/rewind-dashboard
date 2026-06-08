@@ -104,12 +104,23 @@ function launchSessionPlugin(): Plugin {
               child.unref()
               setTimeout(() => { try { unlinkSync(batPath) } catch {} }, 60000)
             } else if (platform() === 'darwin') {
-              // macOS: use osascript to run in Terminal.app with full shell environment
-              const escaped = `cd "${sessionCwd}" && ${resumeCmd}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-              spawn('osascript', [
-                '-e', `tell application "Terminal" to do script "${escaped}"`,
-                '-e', 'tell application "Terminal" to activate',
-              ], { detached: true, stdio: 'ignore' }).unref()
+              // macOS: write a .command script and open it in the user's default
+              // terminal. Avoids hand-rolled osascript escaping (which broke cwd
+              // paths containing spaces) and the AppleScript automation prompt.
+              // `-l` login shell + `exec "$SHELL"` load the user's PATH (so
+              // `claude` resolves) and keep the window open after exit.
+              const cmdPath = join(tmpdir(), `launch-session-${sessionId.slice(0, 8)}.command`)
+              const lines = [
+                '#!/bin/bash -l',
+                `cd "${sessionCwd}"`,
+                resumeCmd,
+                'exec "$SHELL"',
+                '',
+              ]
+              writeFileSync(cmdPath, lines.join('\n'))
+              chmodSync(cmdPath, 0o755)
+              spawn('open', [cmdPath], { detached: true, stdio: 'ignore' }).unref()
+              setTimeout(() => { try { unlinkSync(cmdPath) } catch {} }, 60000)
             } else {
               // Linux: write a shell script that sources profile for PATH
               const shPath = join(tmpdir(), `launch-session-${sessionId.slice(0,8)}.sh`)

@@ -1,40 +1,43 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('Stats Page', () => {
+// The former /stats route now redirects to /dashboard, which hosts the stats
+// summary cards (Sessions / Messages / Tokens / Cost) and the charts.
+test.describe('Stats (Dashboard)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/stats')
-    // Wait for stats to load (summary cards appear)
-    await page.waitForSelector('text=Total Sessions', { timeout: 15_000 })
+    // /stats redirects to /dashboard; wait for a chart that only renders once
+    // stats have loaded.
+    await page.waitForSelector('text=Model Usage', { timeout: 15_000 })
   })
 
-  test('Given stats-cache.json exists in fixtures, When I visit /stats, Then I see summary cards', async ({
+  test('Given stats-cache.json exists in fixtures, When I visit the dashboard, Then I see summary cards', async ({
     page,
   }) => {
-    await expect(page.getByText('Total Sessions').first()).toBeVisible()
-    await expect(page.getByText('Total Messages').first()).toBeVisible()
-    await expect(page.getByText('Total Tokens').first()).toBeVisible()
-    await expect(page.getByText('Longest Session').first()).toBeVisible()
+    const main = page.locator('main')
+    await expect(main.getByText('Sessions').first()).toBeVisible()
+    await expect(main.getByText('Messages').first()).toBeVisible()
+    await expect(main.getByText('Tokens').first()).toBeVisible()
+    await expect(main.getByText('Cost').first()).toBeVisible()
     await page.screenshot({
       path: 'e2e/screenshots/stats-overview.png',
       fullPage: true,
     })
   })
 
-  test('Given stats data exists, When I view the stats page, Then I see "3" as total sessions', async ({
+  test('Given stats data exists, Then the Sessions card shows "3" total sessions', async ({
     page,
   }) => {
-    // The stat card for Total Sessions should contain the value "3"
-    const totalSessionsCard = page
-      .locator('div.rounded-xl')
-      .filter({ hasText: 'Total Sessions' })
+    // The Sessions summary card links to /sessions and shows the total (3).
+    const sessionsCard = page
+      .locator('main a[href="/sessions"]')
+      .filter({ hasText: 'Sessions' })
       .first()
-    await expect(totalSessionsCard).toContainText('3')
+    await expect(sessionsCard).toContainText('3')
   })
 
   test('Given stats data exists, Then I see the Daily Activity chart rendered', async ({
     page,
   }) => {
-    // Activity chart has heading "Daily Activity"
     await expect(page.getByText('Daily Activity').first()).toBeVisible()
   })
 

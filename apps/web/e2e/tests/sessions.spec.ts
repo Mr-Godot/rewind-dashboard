@@ -65,14 +65,14 @@ test.describe('Sessions List', () => {
     }
   })
 
-  test('Given I am on /sessions, When I view a session card, Then it shows model, branch, and duration info', async ({
+  test('Given I am on /sessions, When I view a session card, Then it shows model and message info', async ({
     page,
   }) => {
     const firstCard = page.locator('a[href*="/sessions/session-"]').first()
     const cardText = await firstCard.textContent()
     // Should have a model name (displayed as shortened version like "sonnet-4")
     expect(cardText).toMatch(/sonnet|haiku|opus/i)
-    // Should have branch info
-    expect(cardText).toMatch(/main|feature|develop/i)
+    // Should show the message count (e.g. "4 msgs")
+    expect(cardText).toMatch(/\d+\s*msg/i)
   })
 })

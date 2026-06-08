@@ -163,20 +163,30 @@ function launchSessionPlugin(): Plugin {
   }
 }
 
-export default defineConfig({
-  server: {
-    port: 3000,
-    watch: {
-      ignored: ['**/routeTree.gen.ts'],
+export default defineConfig(({ command }) => {
+  // Production builds must use React's production JSX transform. Vite defaults
+  // builds to mode=production, but @vitejs/plugin-react keys its dev-vs-prod JSX
+  // runtime on process.env.NODE_ENV — if it's unset, the SSR bundle emits
+  // `jsxDEV` and the built server crashes at runtime ("jsxDEV is not a
+  // function"). Pin NODE_ENV=production for builds (respect an explicit override).
+  if (command === 'build' && !process.env.NODE_ENV) {
+    process.env.NODE_ENV = 'production'
+  }
+  return {
+    server: {
+      port: 3000,
+      watch: {
+        ignored: ['**/routeTree.gen.ts'],
+      },
     },
-  },
-  plugins: [
-    launchSessionPlugin(),
-    tsConfigPaths(),
-    tanstackStart(),
-    viteReact(),
-    tailwindcss(),
-  ],
-  // Test config is in vitest.config.ts (separate from app config to avoid
-  // tanstackStart/viteReact plugins interfering with React module resolution in tests)
+    plugins: [
+      launchSessionPlugin(),
+      tsConfigPaths(),
+      tanstackStart(),
+      viteReact(),
+      tailwindcss(),
+    ],
+    // Test config is in vitest.config.ts (separate from app config to avoid
+    // tanstackStart/viteReact plugins interfering with React module resolution in tests)
+  }
 })

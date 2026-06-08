@@ -64,7 +64,7 @@ export function SessionFilters({ projects, activeCount, searchRef }: SessionFilt
         <input
           ref={searchRef}
           type="text"
-          placeholder="Search sessions... (\u2318K)"
+          placeholder="Search sessions... (⌘K)"
           value={localSearch}
           onChange={(e) => handleSearchChange(e.target.value)}
           className="min-w-[200px] flex-1 rounded-lg border border-gray-700 bg-gray-800/50 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"

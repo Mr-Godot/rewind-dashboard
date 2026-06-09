@@ -5,10 +5,10 @@
   "type": "module",
   "license": "MIT",
   "author": "Godot Huard",
-  "homepage": "https://github.com/GodotH/rewind-dashboard",
+  "homepage": "https://github.com/mr-godot/rewind-dashboard",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GodotH/rewind-dashboard.git"
+    "url": "git+https://github.com/mr-godot/rewind-dashboard.git"
   },
   "keywords": [
     "claude",

@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 ```bash
-git clone https://github.com/GodotH/rewind-dashboard.git
+git clone https://github.com/mr-godot/rewind-dashboard.git
 cd rewind-dashboard/apps/web
 npm install
 npx vite --port 3030
@@ -52,4 +52,4 @@ npx vitest               # Unit tests
 
 ## Questions?
 
-Open an [issue](https://github.com/GodotH/rewind-dashboard/issues).
+Open an [issue](https://github.com/mr-godot/rewind-dashboard/issues).

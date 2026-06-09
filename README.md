@@ -53,7 +53,7 @@ Full chat history on the session detail page — every message, tool call, and t
 ## Quick Start
 
 ```bash
-git clone https://github.com/GodotH/rewind-dashboard.git
+git clone https://github.com/mr-godot/rewind-dashboard.git
 cd rewind-dashboard/apps/web
 npm install
 npx vite --port 3030

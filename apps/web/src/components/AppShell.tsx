@@ -90,7 +90,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <a
-                href="https://github.com/GodotH/rewind-dashboard"
+                href="https://github.com/mr-godot/rewind-dashboard"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-gray-500 hover:text-gray-300 transition-colors"

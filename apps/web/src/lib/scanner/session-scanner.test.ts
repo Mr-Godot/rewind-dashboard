@@ -266,6 +266,45 @@ describe('session-scanner', () => {
       expect(result).toEqual([])
     })
 
+    it('excludes content-less stub sessions (0 messages, inactive)', async () => {
+      const {
+        scanAllSessions,
+        mockScanProjects,
+        mockParseSummary,
+        mockIsSessionActive,
+        mockStat,
+      } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ messageCount: 0 }))
+      mockIsSessionActive.mockResolvedValue(false)
+
+      const result = await scanAllSessions()
+
+      expect(result).toEqual([])
+    })
+
+    it('keeps a 0-message session when it is currently active', async () => {
+      const {
+        scanAllSessions,
+        mockScanProjects,
+        mockParseSummary,
+        mockIsSessionActive,
+        mockStat,
+      } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ messageCount: 0 }))
+      mockIsSessionActive.mockResolvedValue(true)
+
+      const result = await scanAllSessions()
+
+      expect(result).toHaveLength(1)
+      expect(result[0].isActive).toBe(true)
+    })
+
     it('uses in-memory cache on second call when mtime is unchanged', async () => {
       const {
         scanAllSessions,

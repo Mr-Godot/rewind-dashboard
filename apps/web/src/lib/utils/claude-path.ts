@@ -8,22 +8,31 @@ function resolveClaudeDir(): string {
   return path.join(os.homedir(), '.claude')
 }
 
-const CLAUDE_DIR = resolveClaudeDir()
+// Resolved lazily on first use, NOT at module load. This module is imported by
+// client bundles (e.g. metadata.api -> claude-path for decode helpers); a
+// top-level os.homedir() call would run in the browser where node:os is an
+// externalized stub and crash the page. Server callers resolve it on demand.
+let claudeDirCache: string | undefined
+
+function claudeDir(): string {
+  if (claudeDirCache === undefined) claudeDirCache = resolveClaudeDir()
+  return claudeDirCache
+}
 
 export function getClaudeDir(): string {
-  return CLAUDE_DIR
+  return claudeDir()
 }
 
 export function getProjectsDir(): string {
-  return path.join(CLAUDE_DIR, 'projects')
+  return path.join(claudeDir(), 'projects')
 }
 
 export function getStatsPath(): string {
-  return path.join(CLAUDE_DIR, 'stats-cache.json')
+  return path.join(claudeDir(), 'stats-cache.json')
 }
 
 export function getHistoryPath(): string {
-  return path.join(CLAUDE_DIR, 'history.jsonl')
+  return path.join(claudeDir(), 'history.jsonl')
 }
 
 /**

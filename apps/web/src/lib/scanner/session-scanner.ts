@@ -200,7 +200,11 @@ async function runScan(): Promise<SessionSummaryWithPath[]> {
   }
   persistSummaryCache()
 
-  return summaries
+  // Exclude content-less stub files (summary / file-history-snapshot only, i.e.
+  // zero conversation messages) unless currently active. Real sessions always
+  // have at least one message; this keeps metadata stubs out of the list without
+  // ever dropping a genuine or in-progress session.
+  return summaries.filter((s) => s.messageCount > 0 || s.isActive)
 }
 
 /** Public API: returns SessionSummary[] without filePath -- used by server functions that serialize to client. */

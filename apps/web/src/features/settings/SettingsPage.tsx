@@ -11,6 +11,7 @@ import { TierSelector } from './TierSelector'
 import { PricingTableEditor } from './PricingTableEditor'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import { useRescan } from '@/features/sessions/rescan.queries'
 
 export function SettingsPage() {
   const { data: settings, isLoading } = useQuery(settingsQuery)
@@ -32,6 +33,7 @@ function SettingsForm({ settings }: { settings: Settings }) {
   const { privacyMode, togglePrivacyMode } = usePrivacy()
   const { theme, toggleTheme } = useTheme()
   const isDark = theme === 'dark'
+  const rescan = useRescan()
 
   const [tier, setTier] = useState<SubscriptionTierId>(settings.subscriptionTier)
   const [overrides, setOverrides] = useState<Record<string, ModelPricingOverride>>(settings.pricingOverrides)
@@ -161,6 +163,33 @@ function SettingsForm({ settings }: { settings: Settings }) {
                     !isDark ? 'translate-x-[18px]' : 'translate-x-[3px]'
                   }`}
                 />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Maintenance */}
+      <div className="mt-6">
+        <h2 className="text-sm font-semibold text-gray-300">Maintenance</h2>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Force a cold re-scan of ~/.claude. Use this to pick up new sessions or
+          un-stick sessions that look stuck.
+        </p>
+        <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-300">Re-scan sessions</span>
+            <div className="flex items-center gap-2">
+              {rescan.isSuccess && (
+                <span className="text-xs text-matrix">done</span>
+              )}
+              <button
+                type="button"
+                onClick={() => rescan.mutate()}
+                disabled={rescan.isPending}
+                className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-gray-600 hover:text-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {rescan.isPending ? 'rescanning…' : 'rescan'}
               </button>
             </div>
           </div>

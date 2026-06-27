@@ -21,6 +21,7 @@ interface PaginatedSessionParams {
   project: string
   sort: string
   starFirst: boolean
+  showHidden: boolean
 }
 
 export function paginatedSessionListQuery(params: PaginatedSessionParams & { hasActive?: boolean }) {

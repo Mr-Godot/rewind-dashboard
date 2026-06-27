@@ -26,6 +26,7 @@ function ProjectHeader({
 }) {
   const hideMutation = useHideProject()
   const pinMutation = usePinProject()
+  const [hidden, setHidden] = useState(false)
 
   return (
     <div className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900/80 px-4 py-2.5">
@@ -55,14 +56,27 @@ function ProjectHeader({
         </button>
       </div>
       <div className="flex items-center gap-1">
-        <button
-          type="button"
-          title="Hide project"
-          onClick={() => hideMutation.mutate({ projectDir, hidden: true })}
-          className="rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
-        >
-          Hide
-        </button>
+        {hidden ? (
+          <span className="flex items-center gap-1 text-xs text-gray-500">
+            project hidden
+            <button
+              type="button"
+              onClick={() => { hideMutation.mutate({ projectDir, hidden: false }); setHidden(false) }}
+              className="rounded bg-blue-900/50 px-1.5 py-0.5 text-blue-400 hover:bg-blue-800/60"
+            >
+              undo
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            title={`hide whole project: ${projectName}`}
+            onClick={() => { hideMutation.mutate({ projectDir, hidden: true }); setHidden(true) }}
+            className="rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
+          >
+            hide project
+          </button>
+        )}
       </div>
     </div>
   )

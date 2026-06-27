@@ -25,9 +25,18 @@ const paginatedSessionsInputSchema = z.object({
   project: z.string(),
   sort: z.enum(['latest', 'mostActive', 'longest', 'largest', 'starred']).default('latest'),
   starFirst: z.boolean().default(true),
+  showHidden: z.boolean().default(false),
 })
 
-type PaginatedSessionsInput = z.infer<typeof paginatedSessionsInputSchema>
+type PaginatedSessionsInput = Omit<z.infer<typeof paginatedSessionsInputSchema>, 'showHidden'> & {
+  showHidden?: boolean
+}
+
+export interface HiddenProjectSummary {
+  projectDir: string
+  projectName: string
+  sessionCount: number
+}
 
 export interface PaginatedSessionsResult {
   sessions: SessionSummary[]
@@ -36,6 +45,8 @@ export interface PaginatedSessionsResult {
   page: number
   pageSize: number
   projects: string[]
+  hiddenProjects: HiddenProjectSummary[]
+  hiddenSessionCount: number
 }
 
 /**
@@ -47,16 +58,38 @@ export async function paginateAndFilterSessions(
   input: PaginatedSessionsInput,
   metadata?: Metadata,
 ): Promise<PaginatedSessionsResult> {
-  const { page, pageSize, search, status, project, sort, starFirst } = input
+  const { page, pageSize, search, status, project, sort, starFirst, showHidden = false } = input
 
-  // Filter out sessions from hidden projects
-  const hiddenProjects = new Set(
+  // Identify hidden project keys (authoritative: encoded projectDir)
+  const hiddenProjectKeys = new Set(
     Object.entries(metadata?.projects ?? {})
       .filter(([, v]) => v.hidden)
       .map(([k]) => k),
   )
-  if (hiddenProjects.size > 0 && !project) {
-    allSessions = allSessions.filter((s) => s.isActive || !hiddenProjects.has(s.projectDir))
+
+  // Summarize hidden projects from the full set, independent of any filter
+  const hiddenStats = new Map<string, HiddenProjectSummary>()
+  for (const s of allSessions) {
+    if (!hiddenProjectKeys.has(s.projectDir)) continue
+    const existing = hiddenStats.get(s.projectDir)
+    if (existing) {
+      existing.sessionCount++
+    } else {
+      hiddenStats.set(s.projectDir, {
+        projectDir: s.projectDir,
+        projectName: s.projectName,
+        sessionCount: 1,
+      })
+    }
+  }
+  const hiddenProjects = Array.from(hiddenStats.values()).sort((a, b) =>
+    a.projectName.localeCompare(b.projectName),
+  )
+  const hiddenSessionCount = hiddenProjects.reduce((sum, p) => sum + p.sessionCount, 0)
+
+  // Filter out sessions from hidden projects (unless showHidden)
+  if (!showHidden && hiddenProjectKeys.size > 0 && !project) {
+    allSessions = allSessions.filter((s) => s.isActive || !hiddenProjectKeys.has(s.projectDir))
   }
 
   // Extract distinct project names from (non-hidden) set
@@ -176,6 +209,8 @@ export async function paginateAndFilterSessions(
     page: clampedPage,
     pageSize,
     projects,
+    hiddenProjects,
+    hiddenSessionCount,
   }
 }
 

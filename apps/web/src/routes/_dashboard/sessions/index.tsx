@@ -2,15 +2,20 @@ import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 import { SessionList } from '@/features/sessions/SessionList'
 
+export const STATUS_OPTIONS = ['all', 'active', 'completed'] as const
+export const SORT_OPTIONS = ['latest', 'mostActive', 'longest', 'largest', 'starred'] as const
+export const VIEW_OPTIONS = ['flat', 'grouped'] as const
+
 const sessionsSearchSchema = z.object({
   page: z.number().int().min(1).default(1).catch(1),
   pageSize: z.number().int().min(5).max(100).default(25).catch(25),
   search: z.string().default('').catch(''),
-  status: z.enum(['all', 'active', 'completed']).default('all').catch('all'),
+  status: z.enum(STATUS_OPTIONS).default('all').catch('all'),
   project: z.string().default('').catch(''),
-  sort: z.enum(['latest', 'mostActive', 'longest', 'largest', 'starred']).default('latest').catch('latest'),
+  sort: z.enum(SORT_OPTIONS).default('latest').catch('latest'),
   starFirst: z.boolean().default(true).catch(true),
-  view: z.enum(['flat', 'grouped']).default('flat').catch('flat'),
+  view: z.enum(VIEW_OPTIONS).default('flat').catch('flat'),
+  showHidden: z.boolean().default(false).catch(false),
 })
 
 export type SessionsSearch = z.infer<typeof sessionsSearchSchema>

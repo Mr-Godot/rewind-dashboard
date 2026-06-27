@@ -40,6 +40,7 @@ function DashboardPage() {
       project: '',
       sort: 'latest',
       starFirst: false,
+      showHidden: false,
     }),
   )
   const { data: metadata } = useQuery(metadataQuery)

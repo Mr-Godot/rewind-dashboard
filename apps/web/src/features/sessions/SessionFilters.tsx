@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Route } from '@/routes/_dashboard/sessions/index'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
+import { useRescan } from './rescan.queries'
 
 interface SessionFiltersProps {
   projects: string[]
@@ -13,6 +14,7 @@ export function SessionFilters({ projects, activeCount, searchRef }: SessionFilt
   const navigate = useNavigate()
   const { search: urlSearch, status, project, sort, view, pageSize, starFirst } = Route.useSearch()
   const { privacyMode, anonymizeProjectName } = usePrivacy()
+  const rescan = useRescan()
 
   const [localSearch, setLocalSearch] = useState(urlSearch)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -145,6 +147,16 @@ export function SessionFilters({ projects, activeCount, searchRef }: SessionFilt
             </button>
           ))}
         </div>
+
+        <button
+          type="button"
+          onClick={() => rescan.mutate()}
+          disabled={rescan.isPending}
+          title="re-scan ~/.claude for new or stuck sessions"
+          className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {rescan.isPending ? 'rescanning…' : 'rescan'}
+        </button>
       </div>
     </div>
   )

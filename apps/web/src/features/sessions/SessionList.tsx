@@ -2,12 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { paginatedSessionListQuery, activeSessionsQuery } from './sessions.queries'
+import type { HiddenProjectSummary } from './sessions.api'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
 import { SessionCard } from './SessionCard'
 import { SessionFilters } from './SessionFilters'
 import { PaginationControls } from './PaginationControls'
 import { usePageSizePreference } from './usePageSizePreference'
+import {
+  useSessionFilterPreferences,
+  shouldRehydrate,
+  reconcileStoredProject,
+} from './useSessionFilterPreferences'
 import { SessionListGrouped } from './SessionListGrouped'
+import { useHideProject } from '@/features/metadata/useMetadataMutations'
+import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { searchConversations, type SearchHit } from './search.api'
 import { formatRelativeTime, formatDateTime } from '@/lib/utils/format'
 import { Link } from '@tanstack/react-router'
@@ -15,9 +23,11 @@ import { Route } from '@/routes/_dashboard/sessions/index'
 
 export function SessionList() {
   const navigate = useNavigate()
-  const { page, pageSize, search, status, project, sort, starFirst, view } = Route.useSearch()
+  const { page, pageSize, search, status, project, sort, starFirst, view, showHidden } = Route.useSearch()
   const { storedPageSize, setPageSize } = usePageSizePreference()
+  const { storedFilters, persistFilters } = useSessionFilterPreferences()
   const hasAppliedStoredPreference = useRef(false)
+  const hasRehydratedFilters = useRef(false)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   // Cmd+K to focus search
@@ -47,12 +57,45 @@ export function SessionList() {
     }
   }, [storedPageSize, pageSize, navigate])
 
+  // One-shot rehydrate of saved filters when arriving with a bare URL
+  useEffect(() => {
+    if (hasRehydratedFilters.current) return
+    if (shouldRehydrate(window.location.search, storedFilters)) {
+      hasRehydratedFilters.current = true
+      navigate({
+        to: '/sessions',
+        search: (prev) => ({ ...prev, ...storedFilters, page: 1 }),
+        replace: true,
+      })
+    } else {
+      hasRehydratedFilters.current = true
+    }
+  }, [storedFilters, navigate])
+
+  // Write-through: persist filters whenever they change
+  useEffect(() => {
+    persistFilters({ status, sort, starFirst, view, project })
+  }, [status, sort, starFirst, view, project, persistFilters])
+
   const { data: activeSessions = [] } = useQuery(activeSessionsQuery)
   const hasActive = activeSessions.length > 0
   const { data: paginatedData, isLoading } = useQuery(
-    paginatedSessionListQuery({ page, pageSize, search, status, project, sort, starFirst, hasActive }),
+    paginatedSessionListQuery({ page, pageSize, search, status, project, sort, starFirst, showHidden, hasActive }),
   )
   const { data: metadata } = useQuery(metadataQuery)
+
+  // Drop a stale stored project that no longer exists in the current set
+  useEffect(() => {
+    if (!project || !paginatedData) return
+    const reconciled = reconcileStoredProject(project, paginatedData.projects)
+    if (reconciled !== project) {
+      navigate({
+        to: '/sessions',
+        search: (prev) => ({ ...prev, project: reconciled, page: 1 }),
+        replace: true,
+      })
+    }
+  }, [project, paginatedData, navigate])
 
   // Progressive loading: once the current page is in, background-prefetch the
   // NEXT page only (page+1) so advancing is instant. Pages beyond that stay
@@ -62,9 +105,9 @@ export function SessionList() {
     const totalPages = paginatedData?.totalPages ?? 1
     if (page + 1 > totalPages) return
     queryClient.prefetchQuery(
-      paginatedSessionListQuery({ page: page + 1, pageSize, search, status, project, sort, starFirst, hasActive }),
+      paginatedSessionListQuery({ page: page + 1, pageSize, search, status, project, sort, starFirst, showHidden, hasActive }),
     )
-  }, [queryClient, page, pageSize, search, status, project, sort, starFirst, hasActive, paginatedData?.totalPages])
+  }, [queryClient, page, pageSize, search, status, project, sort, starFirst, showHidden, hasActive, paginatedData?.totalPages])
 
   // Merge active status from fast-polling query
   const mergedSessions = useMemo(() => {
@@ -115,6 +158,13 @@ export function SessionList() {
   const totalCount = paginatedData?.totalCount ?? 0
   const totalPages = paginatedData?.totalPages ?? 1
   const activeCount = activeSessions.length
+  const hiddenSessionCount = paginatedData?.hiddenSessionCount ?? 0
+  const hiddenProjects = paginatedData?.hiddenProjects ?? []
+  const noActiveFilter = !search && status === 'all' && !project
+
+  function toggleShowHidden() {
+    navigate({ to: '/sessions', search: (prev) => ({ ...prev, showHidden: !showHidden, page: 1 }) })
+  }
 
   return (
     <div>
@@ -124,15 +174,37 @@ export function SessionList() {
         searchRef={searchInputRef}
       />
 
+      {hiddenSessionCount > 0 && (
+        <HiddenBanner
+          hiddenSessionCount={hiddenSessionCount}
+          hiddenProjects={hiddenProjects}
+          showHidden={showHidden}
+          onToggle={toggleShowHidden}
+        />
+      )}
+
       {/* Background refetch — no visual indicator */}
 
       <div className="mt-4 space-y-2">
         {mergedSessions.length === 0 ? (
-          <div className="py-12 text-center text-sm text-gray-500">
-            {totalCount === 0 && !search && status === 'all' && !project
-              ? 'No sessions found in ~/.claude'
-              : 'No sessions match your filters'}
-          </div>
+          totalCount === 0 && hiddenSessionCount > 0 && noActiveFilter ? (
+            <div className="py-12 text-center text-sm text-gray-500">
+              no visible sessions — {hiddenSessionCount} hidden.{' '}
+              <button
+                type="button"
+                onClick={toggleShowHidden}
+                className="text-matrix underline-offset-2 hover:underline"
+              >
+                [show hidden]
+              </button>
+            </div>
+          ) : (
+            <div className="py-12 text-center text-sm text-gray-500">
+              {totalCount === 0 && noActiveFilter
+                ? 'No sessions found in ~/.claude'
+                : 'No sessions match your filters'}
+            </div>
+          )
         ) : view === 'grouped' ? (
           <SessionListGrouped sessions={mergedSessions} metadata={metadata} />
         ) : (
@@ -162,6 +234,68 @@ export function SessionList() {
           onPageSizeChange={handlePageSizeChange}
         />
       </div>
+    </div>
+  )
+}
+
+function HiddenBanner({
+  hiddenSessionCount,
+  hiddenProjects,
+  showHidden,
+  onToggle,
+}: {
+  hiddenSessionCount: number
+  hiddenProjects: HiddenProjectSummary[]
+  showHidden: boolean
+  onToggle: () => void
+}) {
+  const { privacyMode, anonymizeProjectName } = usePrivacy()
+  const hideMutation = useHideProject()
+  const [expanded, setExpanded] = useState(false)
+  const projectCount = hiddenProjects.length
+
+  return (
+    <div className="mt-3 border border-gray-800 bg-gray-900/60 px-3 py-1.5 text-xs text-gray-400">
+      <div className="flex items-center gap-2">
+        <span>
+          {hiddenSessionCount} sessions in {projectCount} {projectCount === 1 ? 'project' : 'projects'} hidden
+        </span>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="text-matrix underline-offset-2 hover:underline"
+        >
+          [{showHidden ? 'hide' : 'show'}]
+        </button>
+        {projectCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-gray-500 hover:text-gray-300"
+          >
+            {expanded ? '▼' : '▶'} {expanded ? 'collapse' : 'list'}
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div className="mt-2 space-y-1 border-t border-gray-800 pt-2">
+          {hiddenProjects.map((p) => (
+            <div key={p.projectDir} className="flex items-center justify-between gap-2">
+              <span className="truncate">
+                {privacyMode ? anonymizeProjectName(p.projectName) : p.projectName}
+                <span className="ml-1 text-gray-600">({p.sessionCount})</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => hideMutation.mutate({ projectDir: p.projectDir, hidden: false })}
+                className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-blue-400 transition-colors hover:bg-blue-800/60"
+              >
+                unhide
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

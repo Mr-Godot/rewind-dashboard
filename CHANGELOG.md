@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.5.0
+
+### Added
+- **Real conversation search** — replaced the substring scan with a ranked SQLite FTS5 index (BM25 + snippets) that searches message text, tool calls, tool results, and thinking blocks, not just message text. Falls back to the simple scan when the native module is unavailable (#59)
+- **Persistent filters** — sort, status, starred, view, and project filters now survive navigating away and back; explicit URL params still override (#60)
+- **Hidden projects, surfaced** — the Sessions page shows a "N sessions in M projects hidden" banner with one-click unhide and a hidden-aware empty state, plus a **rescan** button to force a fresh scan when things look stale
+
+### Fixed
+- **Sessions silently missing** — project hide/pin is now keyed by the stable encoded directory name instead of a lossy decoded path, so new or path-colliding projects can no longer be auto-hidden; a one-time migration remaps legacy keys, drops orphaned keys and the `C:/` landmine, and resolves contradictory pinned+hidden state (#63)
+- **Accidental whole-project hide** — the per-card "hide" button (which silently hid an entire project in one click) now reads as a project action and offers undo
+- **Wrong counts** — message counts and token totals were extrapolated from 30 sampled lines; they are now exact via a single full pass, which also fixes the "most active" sort (#64)
+- **Active detection** — no longer treats the persistent `subagents/` directory as a liveness lock (#29)
+- **Render crashes** — hardened the production JSX build against an inherited `NODE_ENV=development` (`jsxDEV is not a function`), and removed a client-side `os.homedir()` crash that broke the Sessions page
+- **Faster, un-stuck scans** — concurrent pollers now coalesce onto a single in-flight scan instead of overlapping cold scans
+- **Tests no longer touch real data** — the disk-cache test sandboxes the cache directory instead of deleting `~/.claude-dashboard/cache`
+
 ## v1.4.0
 
 ### Added

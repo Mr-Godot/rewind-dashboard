@@ -204,7 +204,7 @@ export interface HistoryEntry {
  *              agentId still appears in tool_result text and toolUseResult.
  */
 export interface RawJsonlMessage {
-  type: 'user' | 'assistant' | 'system' | 'progress' | 'file-history-snapshot'
+  type: 'user' | 'assistant' | 'system' | 'progress' | 'file-history-snapshot' | 'custom-title'
   uuid?: string
   parentUuid?: string
   sessionId?: string
@@ -270,4 +270,10 @@ export interface RawJsonlMessage {
   slug?: string
   subtype?: string
   level?: string
+  /** Set on type: 'custom-title' entries (Claude Code's /rename) */
+  customTitle?: string
+  /** Nested timestamp on type: 'file-history-snapshot' entries */
+  snapshot?: {
+    timestamp?: string
+  }
 }

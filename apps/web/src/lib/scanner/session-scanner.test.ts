@@ -82,6 +82,7 @@ describe('session-scanner', () => {
       scanAllSessions: scanner.scanAllSessions,
       scanAllSessionsWithPaths: scanner.scanAllSessionsWithPaths,
       getActiveSessions: scanner.getActiveSessions,
+      clearSummaryCache: scanner.clearSummaryCache,
       mockScanProjects: scanProjects as ReturnType<typeof vi.fn>,
       mockParseSummary: parseSummary as ReturnType<typeof vi.fn>,
       mockIsSessionActive: isSessionActive as ReturnType<typeof vi.fn>,
@@ -337,6 +338,80 @@ describe('session-scanner', () => {
       await scanAllSessions()
 
       // parseSummary called twice because cache was stale on second call
+      expect(mockParseSummary).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('in-flight scan lock', () => {
+    it('coalesces concurrent callers onto one scan (scanProjects runs once)', async () => {
+      const {
+        scanAllSessions,
+        mockScanProjects,
+        mockParseSummary,
+        mockIsSessionActive,
+        mockStat,
+      } = await importScanner()
+
+      const summary = makeSummary()
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(summary)
+      mockIsSessionActive.mockResolvedValue(false)
+
+      // Both calls start before the first resolves — they must share one scan.
+      const [a, b] = await Promise.all([scanAllSessions(), scanAllSessions()])
+
+      expect(mockScanProjects).toHaveBeenCalledTimes(1)
+      expect(a).toEqual(b)
+      expect(a).toHaveLength(1)
+    })
+
+    it('runs a fresh scan after the previous one settles', async () => {
+      const {
+        scanAllSessions,
+        mockScanProjects,
+        mockParseSummary,
+        mockIsSessionActive,
+        mockStat,
+      } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary())
+      mockIsSessionActive.mockResolvedValue(false)
+
+      await scanAllSessions()
+      await scanAllSessions()
+
+      // Lock cleared between sequential calls → scanProjects runs each time.
+      expect(mockScanProjects).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('clearSummaryCache', () => {
+    it('empties the in-memory cache so the next scan re-parses', async () => {
+      const {
+        scanAllSessions,
+        clearSummaryCache,
+        mockScanProjects,
+        mockParseSummary,
+        mockIsSessionActive,
+        mockStat,
+      } = await importScanner()
+
+      const summary = makeSummary()
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 7000, size: 1024 })
+      mockParseSummary.mockResolvedValue(summary)
+      mockIsSessionActive.mockResolvedValue(false)
+
+      await scanAllSessions() // cold → parse #1
+      await scanAllSessions() // cache hit → no new parse
+      expect(mockParseSummary).toHaveBeenCalledTimes(1)
+
+      clearSummaryCache() // wipe the Map
+
+      await scanAllSessions() // cache empty → parse #2
       expect(mockParseSummary).toHaveBeenCalledTimes(2)
     })
   })

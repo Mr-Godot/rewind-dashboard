@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { parseDetail } from './session-parser'
+import { parseDetail, parseSummary } from './session-parser'
 
 describe('parseSubagentSkills', () => {
   let tempDir: string
@@ -913,5 +913,134 @@ describe('parseSubagentSkills', () => {
       expect(result.agents).toHaveLength(1)
       expect(result.agents[0].skills).toEqual([])
     })
+  })
+})
+
+describe('parseSummary', () => {
+  let tempDir: string
+  let testFiles: string[]
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-parse-summary-'))
+    testFiles = []
+  })
+
+  afterEach(() => {
+    for (const file of testFiles) {
+      try {
+        if (fs.existsSync(file)) fs.unlinkSync(file)
+      } catch { /* ignore */ }
+    }
+    try {
+      if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true })
+    } catch { /* ignore */ }
+  })
+
+  function writeJSONL(lines: string[]): string {
+    const filePath = path.join(tempDir, `session-${Date.now()}-${Math.random()}.jsonl`)
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
+    testFiles.push(filePath)
+    return filePath
+  }
+
+  const MTIME = Date.UTC(2026, 0, 15, 12, 0, 0)
+
+  it('computes EXACT counts and tokens over the whole file (not head/tail sampled)', async () => {
+    // 20 user + 20 assistant messages = 40 lines, well past the old 30-line sample.
+    const lines: string[] = []
+    for (let i = 0; i < 20; i++) {
+      lines.push(JSON.stringify({
+        type: 'user',
+        timestamp: `2026-01-01T10:${String(i).padStart(2, '0')}:00Z`,
+        gitBranch: 'main',
+        cwd: '/repo',
+        version: '2.0.0',
+        message: { content: [{ type: 'text', text: `user message ${i}` }] },
+      }))
+      lines.push(JSON.stringify({
+        type: 'assistant',
+        timestamp: `2026-01-01T10:${String(i).padStart(2, '0')}:30Z`,
+        message: {
+          model: 'claude-opus-4-6',
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 10,
+            cache_creation_input_tokens: 5,
+          },
+          content: [{ type: 'text', text: `assistant message ${i}` }],
+        },
+      }))
+    }
+    const filePath = writeJSONL(lines)
+
+    const summary = await parseSummary(filePath, 'sid', '/repo', 'repo', 4096, MTIME)
+
+    expect(summary).not.toBeNull()
+    expect(summary!.userMessageCount).toBe(20)
+    expect(summary!.assistantMessageCount).toBe(20)
+    expect(summary!.messageCount).toBe(40)
+    // 20 assistants × (100 + 10 + 5 input-side + 50 output) = 20 × 165 = 3300
+    expect(summary!.totalTokens).toBe(3300)
+    expect(summary!.model).toBe('claude-opus-4-6')
+    expect(summary!.branch).toBe('main')
+    expect(summary!.cwd).toBe('/repo')
+    expect(summary!.version).toBe('2.0.0')
+    expect(summary!.firstUserMessage).toBe('user message 0')
+    expect(summary!.startedAt).toBe('2026-01-01T10:00:00Z')
+    expect(summary!.lastActiveAt).toBe('2026-01-01T10:19:30Z')
+  })
+
+  it('parses a file whose only timestamps live in file-history-snapshot.snapshot.timestamp (#63)', async () => {
+    const filePath = writeJSONL([
+      JSON.stringify({ type: 'file-history-snapshot', snapshot: { timestamp: '2026-02-01T08:00:00Z' } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'hi there' }] } }),
+      JSON.stringify({ type: 'file-history-snapshot', snapshot: { timestamp: '2026-02-01T09:00:00Z' } }),
+    ])
+
+    const summary = await parseSummary(filePath, 'sid', '/repo', 'repo', 100, MTIME)
+
+    expect(summary).not.toBeNull()
+    expect(summary!.startedAt).toBe('2026-02-01T08:00:00Z')
+    expect(summary!.lastActiveAt).toBe('2026-02-01T09:00:00Z')
+    // The lone user message is still counted; snapshots are not.
+    expect(summary!.userMessageCount).toBe(1)
+    expect(summary!.messageCount).toBe(1)
+    expect(summary!.firstUserMessage).toBe('hi there')
+  })
+
+  it('falls back to the file mtime when no timestamp exists anywhere (#63)', async () => {
+    const filePath = writeJSONL([
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'no timestamp here' }] } }),
+      JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-4-6', content: [{ type: 'text', text: 'reply' }] } }),
+    ])
+
+    const summary = await parseSummary(filePath, 'sid', '/repo', 'repo', 100, MTIME)
+
+    expect(summary).not.toBeNull()
+    expect(summary!.startedAt).toBe(new Date(MTIME).toISOString())
+    expect(summary!.lastActiveAt).toBe(new Date(MTIME).toISOString())
+    expect(summary!.messageCount).toBe(2)
+  })
+
+  it('captures the last custom-title (/rename) anywhere in the file', async () => {
+    const filePath = writeJSONL([
+      JSON.stringify({ type: 'custom-title', customTitle: 'first name' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { content: [{ type: 'text', text: 'work' }] } }),
+      JSON.stringify({ type: 'custom-title', customTitle: 'final name' }),
+    ])
+
+    const summary = await parseSummary(filePath, 'sid', '/repo', 'repo', 100, MTIME)
+
+    expect(summary).not.toBeNull()
+    expect(summary!.claudeName).toBe('final name')
+  })
+
+  it('returns null for a genuinely empty file', async () => {
+    const filePath = writeJSONL([''])
+
+    const summary = await parseSummary(filePath, 'sid', '/repo', 'repo', 0, MTIME)
+
+    expect(summary).toBeNull()
   })
 })

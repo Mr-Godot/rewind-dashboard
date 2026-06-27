@@ -218,6 +218,7 @@ export interface RawJsonlMessage {
     content?: Array<{
       type: string
       text?: string
+      thinking?: string
       name?: string
       id?: string
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw JSONL content has arbitrary shape

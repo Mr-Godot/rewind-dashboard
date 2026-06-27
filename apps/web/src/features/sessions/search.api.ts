@@ -1,106 +1,63 @@
-import * as fs from 'node:fs'
-import * as path from 'node:path'
-import * as readline from 'node:readline'
 import { createServerFn } from '@tanstack/react-start'
-import { getProjectsDir, decodeProjectDirName, extractProjectName } from '@/lib/utils/claude-path'
+import type { IndexStats } from '@/lib/search/provider'
 
-export interface SearchHit {
-  sessionId: string
-  projectPath: string
-  projectName: string
-  snippet: string
-  timestamp: string
-}
+export type { SearchHit } from '@/lib/search/provider'
 
 /**
  * Full-text search across all session JSONL files.
- * Scans user and assistant message text blocks for the query string.
- * Returns matching session IDs with a text snippet.
+ *
+ * Delegates to the configured SearchProvider (SQLite FTS5 by default, with a
+ * naive substring fallback). The provider is refreshed (incrementally, throttled)
+ * before each search. The returned shape is unchanged from the original API so
+ * the UI needs no changes; provider hits already satisfy SearchHit (extra
+ * optional fields are simply ignored by the UI).
  */
 export const searchConversations = createServerFn({ method: 'GET' })
   .inputValidator((input: { query: string; limit?: number }) => input)
-  .handler(async ({ data }): Promise<SearchHit[]> => {
-    const query = data.query.toLowerCase()
+  .handler(async ({ data }) => {
+    const query = data.query?.trim() ?? ''
     if (query.length < 2) return []
     const limit = data.limit ?? 20
 
-    const projectsDir = getProjectsDir()
-    let projectDirs: string[]
     try {
-      projectDirs = fs.readdirSync(projectsDir)
-    } catch (_) {
+      const { getSearchProvider } = await import('@/lib/search')
+      const provider = getSearchProvider()
+      await provider.refresh()
+      const result = await provider.search({ query, limit })
+      return result.hits
+    } catch {
       return []
     }
-
-    const hits: SearchHit[] = []
-
-    for (const dirName of projectDirs) {
-      if (hits.length >= limit) break
-      const dirPath = path.join(projectsDir, dirName)
-      const stat = fs.statSync(dirPath, { throwIfNoEntry: false })
-      if (!stat?.isDirectory()) continue
-
-      const files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'))
-      const decodedPath = decodeProjectDirName(dirName)
-      const projectName = extractProjectName(decodedPath)
-
-      for (const file of files) {
-        if (hits.length >= limit) break
-        const sessionId = file.replace('.jsonl', '')
-        const filePath = path.join(dirPath, file)
-
-        const found = await searchFile(filePath, query)
-        if (found) {
-          hits.push({
-            sessionId,
-            projectPath: decodedPath,
-            projectName,
-            snippet: found.snippet,
-            timestamp: found.timestamp,
-          })
-        }
-      }
-    }
-
-    return hits
   })
 
-async function searchFile(filePath: string, query: string): Promise<{ snippet: string; timestamp: string } | null> {
-  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
-
-  try {
-    for await (const line of rl) {
-      if (!line.trim()) continue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let msg: any
-      try {
-        msg = JSON.parse(line)
-      } catch (_) {
-        continue
-      }
-
-      if (msg.type !== 'user' && msg.type !== 'assistant') continue
-      const content = msg.message?.content
-      if (!content || !Array.isArray(content)) continue
-
-      for (const block of content) {
-        if (block.type === 'text' && block.text) {
-          const text = block.text as string
-          const idx = text.toLowerCase().indexOf(query)
-          if (idx !== -1) {
-            const start = Math.max(0, idx - 40)
-            const end = Math.min(text.length, idx + query.length + 80)
-            const snippet = (start > 0 ? '...' : '') + text.slice(start, end).trim() + (end < text.length ? '...' : '')
-            return { snippet, timestamp: (msg.timestamp as string) ?? '' }
-          }
-        }
+/** Force a full rebuild of the search index (for a future rebuild button). */
+export const refreshSearchIndex = createServerFn({ method: 'POST' }).handler(
+  async (): Promise<IndexStats> => {
+    try {
+      const { getSearchProvider } = await import('@/lib/search')
+      const provider = getSearchProvider()
+      return await provider.refresh({ force: true })
+    } catch {
+      return {
+        sessionsIndexed: 0,
+        sessionsSkipped: 0,
+        sessionsRemoved: 0,
+        blocksIndexed: 0,
+        durationMs: 0,
       }
     }
+  },
+)
 
-    return null
-  } finally {
-    rl.close()
-    stream.destroy()
-  }
-}
+/** Report which provider is active and whether it is available. */
+export const getSearchIndexStatus = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<{ provider: string; available: boolean }> => {
+    try {
+      const { getSearchProvider } = await import('@/lib/search')
+      const provider = getSearchProvider()
+      return { provider: provider.name, available: await provider.isAvailable() }
+    } catch {
+      return { provider: 'none', available: false }
+    }
+  },
+)

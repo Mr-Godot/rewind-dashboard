@@ -7,6 +7,7 @@ describe('project-analytics', () => {
     overrides: Partial<SessionSummary> = {},
   ): SessionSummary => ({
     sessionId: `session-${Math.random()}`,
+    projectDir: overrides.projectDir ?? overrides.projectPath ?? '/path/to/project',
     projectPath: '/path/to/project',
     projectName: 'test-project',
     branch: 'main',
@@ -240,6 +241,7 @@ describe('project-analytics', () => {
 
       expect(result.projects).toHaveLength(1)
       expect(result.projects[0]).toEqual({
+        projectDir: '/project-a',
         projectPath: '/project-a',
         projectName: 'project-a',
         totalSessions: 1,
@@ -288,6 +290,7 @@ describe('project-analytics', () => {
 
       // project-b should be first (most recent)
       expect(result.projects[0]).toEqual({
+        projectDir: '/project-b',
         projectPath: '/project-b',
         projectName: 'project-b',
         totalSessions: 1,
@@ -300,6 +303,7 @@ describe('project-analytics', () => {
 
       // project-a should be second
       expect(result.projects[1]).toEqual({
+        projectDir: '/project-a',
         projectPath: '/project-a',
         projectName: 'project-a',
         totalSessions: 2,

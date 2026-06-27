@@ -140,6 +140,7 @@ export async function parseSummary(
 
   return {
     sessionId,
+    projectDir: '', // set by the scanner from project.dirName
     projectPath,
     projectName,
     branch,

@@ -31,22 +31,22 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
   const pinMutation = usePinProject()
   const hideMutation = useHideProject()
   const renameMutation = useRenameProject()
-  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const [renamingDir, setRenamingDir] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
   const projectMeta = metadata?.projects ?? {}
 
   const filtered = useMemo(() => {
     if (showHidden) return projects
-    return projects.filter((p) => !projectMeta[p.projectPath]?.hidden)
+    return projects.filter((p) => !projectMeta[p.projectDir]?.hidden)
   }, [projects, showHidden, projectMeta])
 
   const sorted = useMemo(() => {
     const copy = [...filtered]
     copy.sort((a, b) => {
       // Pinned projects always first
-      const aPinned = projectMeta[a.projectPath]?.pinned ? 1 : 0
-      const bPinned = projectMeta[b.projectPath]?.pinned ? 1 : 0
+      const aPinned = projectMeta[a.projectDir]?.pinned ? 1 : 0
+      const bPinned = projectMeta[b.projectDir]?.pinned ? 1 : 0
       if (aPinned !== bPinned) return bPinned - aPinned
 
       let cmp = 0
@@ -108,34 +108,34 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
         </thead>
         <tbody>
           {sorted.map((project) => {
-            const meta = projectMeta[project.projectPath]
+            const meta = projectMeta[project.projectDir]
             const isPinned = meta?.pinned ?? false
             const isHidden = meta?.hidden ?? false
             return (
               <tr
-                key={project.projectPath}
+                key={project.projectDir}
                 className={`group border-b border-gray-800/50 transition-colors hover:bg-gray-800/30 ${
                   isHidden ? 'opacity-50' : ''
                 }`}
               >
                 <td className="px-4 py-3">
-                  {renamingPath === project.projectPath ? (
+                  {renamingDir === project.projectDir ? (
                     <div className="flex items-center gap-1">
                       <input
                         type="text"
                         value={renameValue}
                         onChange={(e) => setRenameValue(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') { renameMutation.mutate({ projectPath: project.projectPath, customName: renameValue.trim() }); setRenamingPath(null) }
-                          if (e.key === 'Escape') setRenamingPath(null)
+                          if (e.key === 'Enter') { renameMutation.mutate({ projectDir: project.projectDir, customName: renameValue.trim() }); setRenamingDir(null) }
+                          if (e.key === 'Escape') setRenamingDir(null)
                         }}
                         autoFocus
                         className="w-48 rounded border border-gray-600 bg-gray-800 px-2 py-0.5 text-sm text-gray-100 outline-none focus:border-brand-500"
                         placeholder="Project name..."
                       />
-                      <button type="button" onClick={() => { renameMutation.mutate({ projectPath: project.projectPath, customName: renameValue.trim() }); setRenamingPath(null) }}
+                      <button type="button" onClick={() => { renameMutation.mutate({ projectDir: project.projectDir, customName: renameValue.trim() }); setRenamingDir(null) }}
                         className="rounded bg-brand-600 px-2 py-0.5 text-xs text-white hover:bg-brand-500">OK</button>
-                      <button type="button" onClick={() => setRenamingPath(null)}
+                      <button type="button" onClick={() => setRenamingDir(null)}
                         className="rounded bg-gray-700 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-600">X</button>
                     </div>
                   ) : (
@@ -143,7 +143,7 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
                       <button
                         type="button"
                         title={isPinned ? 'Unstar project' : 'Star project'}
-                        onClick={() => pinMutation.mutate({ projectPath: project.projectPath, pinned: !isPinned })}
+                        onClick={() => pinMutation.mutate({ projectDir: project.projectDir, pinned: !isPinned })}
                         className={`shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors ${
                           isPinned
                             ? 'bg-amber-900/50 text-amber-400 hover:bg-amber-800/60'
@@ -162,7 +162,7 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
                       <button
                         type="button"
                         title="Rename project"
-                        onClick={() => { setRenameValue(meta?.customName || project.projectName); setRenamingPath(project.projectPath) }}
+                        onClick={() => { setRenameValue(meta?.customName || project.projectName); setRenamingDir(project.projectDir) }}
                         className="rounded px-1 py-0.5 text-xs text-gray-500 opacity-0 group-hover:opacity-100 hover:text-gray-300 transition-opacity"
                       >
                         ✏️
@@ -200,7 +200,7 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
                     <button
                       type="button"
                       title={isHidden ? 'Unhide project' : 'Hide project'}
-                      onClick={() => hideMutation.mutate({ projectPath: project.projectPath, hidden: !isHidden })}
+                      onClick={() => hideMutation.mutate({ projectDir: project.projectDir, hidden: !isHidden })}
                       className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
                         isHidden
                           ? 'bg-blue-900/50 text-blue-400 hover:bg-blue-800/60'

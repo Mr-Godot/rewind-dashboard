@@ -37,7 +37,7 @@ export function useRenameSession() {
 export function usePinProject() {
   const invalidate = useInvalidateAll()
   return useMutation({
-    mutationFn: (args: { projectPath: string; pinned: boolean }) =>
+    mutationFn: (args: { projectDir: string; pinned: boolean }) =>
       pinProject({ data: args }),
     onSuccess: invalidate,
   })
@@ -46,7 +46,7 @@ export function usePinProject() {
 export function useHideProject() {
   const invalidate = useInvalidateAll()
   return useMutation({
-    mutationFn: (args: { projectPath: string; hidden: boolean }) =>
+    mutationFn: (args: { projectDir: string; hidden: boolean }) =>
       hideProject({ data: args }),
     onSuccess: invalidate,
   })
@@ -55,7 +55,7 @@ export function useHideProject() {
 export function useRenameProject() {
   const invalidate = useInvalidateAll()
   return useMutation({
-    mutationFn: (args: { projectPath: string; customName: string }) =>
+    mutationFn: (args: { projectDir: string; customName: string }) =>
       renameProject({ data: args }),
     onSuccess: invalidate,
   })

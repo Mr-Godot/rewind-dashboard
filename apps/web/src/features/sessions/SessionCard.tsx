@@ -27,17 +27,17 @@ function PinButton({ sessionId, pinned }: { sessionId: string; pinned: boolean }
   )
 }
 
-function HideButton({ projectPath }: { projectPath: string }) {
+function HideButton({ projectDir }: { projectDir: string }) {
   const mutation = useHideProject()
   const [hidden, setHidden] = useState(false)
   if (hidden) {
     return (
-      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); mutation.mutate({ projectPath, hidden: false }); setHidden(false) }}
+      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); mutation.mutate({ projectDir, hidden: false }); setHidden(false) }}
         className="shrink-0 rounded bg-blue-900/50 px-1.5 py-0.5 text-xs text-blue-400 hover:bg-blue-800/60">Undo</button>
     )
   }
   return (
-    <button type="button" title="Hide project" onClick={(e) => { e.preventDefault(); e.stopPropagation(); mutation.mutate({ projectPath, hidden: true }); setHidden(true) }}
+    <button type="button" title="Hide project" onClick={(e) => { e.preventDefault(); e.stopPropagation(); mutation.mutate({ projectDir, hidden: true }); setHidden(true) }}
       className="shrink-0 rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:text-gray-300">Hide</button>
   )
 }
@@ -175,7 +175,7 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
 
         <div className="flex shrink-0 items-center gap-1.5">
           <PinButton sessionId={session.sessionId} pinned={isPinned} />
-          <HideButton projectPath={session.projectPath} />
+          <HideButton projectDir={session.projectDir} />
           <LaunchButton sessionId={session.sessionId} cwd={session.cwd || session.projectPath} isActive={session.isActive} />
           <OverflowMenu
             sessionId={session.sessionId}

@@ -1,8 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
 import { scanAllSessions } from '@/lib/scanner/session-scanner'
+import { readMetadataMigrated } from '@/features/metadata/metadata.api'
 import type { SessionSummary } from '@/lib/parsers/types'
 
 export interface ProjectAnalytics {
+  projectDir: string
   projectPath: string
   projectName: string
   totalSessions: number
@@ -24,23 +26,24 @@ export interface ProjectAnalyticsResult {
 export function aggregateProjectAnalytics(
   allSessions: SessionSummary[],
 ): ProjectAnalyticsResult {
-  // Group sessions by projectPath
+  // Group sessions by projectDir (encoded on-disk dir, 1:1 stable key)
   const projectMap = new Map<string, SessionSummary[]>()
   for (const session of allSessions) {
-    const existing = projectMap.get(session.projectPath) ?? []
+    const existing = projectMap.get(session.projectDir) ?? []
     existing.push(session)
-    projectMap.set(session.projectPath, existing)
+    projectMap.set(session.projectDir, existing)
   }
 
   // Aggregate per project
   const projects: ProjectAnalytics[] = []
-  for (const [projectPath, sessions] of projectMap) {
+  for (const [projectDir, sessions] of projectMap) {
     if (sessions.length === 0) continue
 
     const firstSession = sessions[0]
     projects.push({
-      projectPath,
-      projectName: firstSession.projectName ?? projectPath.split('/').pop() ?? 'Unknown',
+      projectDir,
+      projectPath: firstSession.projectPath,
+      projectName: firstSession.projectName ?? firstSession.projectPath.split('/').pop() ?? 'Unknown',
       totalSessions: sessions.length,
       activeSessions: sessions.filter((s) => s.isActive).length,
       totalMessages: sessions.reduce((sum, s) => sum + s.messageCount, 0),
@@ -65,6 +68,8 @@ export function aggregateProjectAnalytics(
 export const getProjectAnalytics = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ProjectAnalyticsResult> => {
     const allSessions = await scanAllSessions()
+    // Ensure legacy metadata keys are migrated to encoded dirs on load.
+    readMetadataMigrated()
     return aggregateProjectAnalytics(allSessions)
   },
 )

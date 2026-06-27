@@ -2,6 +2,7 @@ import * as path from 'node:path'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import { createServerFn } from '@tanstack/react-start'
+import { decodeProjectDirName, getProjectsDir } from '@/lib/utils/claude-path'
 import { MetadataSchema, DEFAULT_METADATA, type Metadata } from './metadata.types'
 
 const METADATA_DIR = '.claude-dashboard'
@@ -59,11 +60,68 @@ function cleanEntry<T extends Record<string, unknown>>(entry: T): T | null {
   return Object.keys(cleaned).length > 0 ? cleaned : null
 }
 
+/** List current on-disk project dir names (directories only). */
+function listProjectDirsSync(): string[] {
+  try {
+    return fs
+      .readdirSync(getProjectsDir(), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Remap legacy (lossy decoded-path) projects keys to encoded on-disk dir names.
+ * - Key already equal to a current dir name: keep as-is.
+ * - Key whose decoded path matches a current dir: remap value to that dir.
+ * - Otherwise: drop (orphan / decoded-path landmine).
+ * Entries that end up both pinned and hidden resolve to pinned only.
+ * Pure and idempotent; sessions.* are left untouched. Stamps version 2.
+ */
+export function migrateProjectKeys(metadata: Metadata, dirNames: string[]): Metadata {
+  const dirSet = new Set(dirNames)
+  const decodedToDir = new Map<string, string>()
+  for (const dir of dirNames) {
+    decodedToDir.set(decodeProjectDirName(dir), dir)
+  }
+
+  const projects: Metadata['projects'] = {}
+  for (const [key, value] of Object.entries(metadata.projects)) {
+    const targetDir = dirSet.has(key) ? key : decodedToDir.get(key)
+    if (!targetDir) continue
+
+    const merged = { ...projects[targetDir], ...value }
+    if (merged.pinned && merged.hidden) merged.hidden = undefined
+    const cleaned = cleanEntry(merged)
+    if (cleaned) projects[targetDir] = cleaned
+  }
+
+  return { ...metadata, version: 2, projects }
+}
+
+/**
+ * Read metadata, migrating legacy v1 (decoded-path keys) to v2 (encoded dirs)
+ * in place. Idempotent: a v2 file is returned untouched without a rewrite.
+ */
+function readMetadataMigrated(): Metadata {
+  const metadata = readMetadataSync()
+  if (metadata.version === 2) return metadata
+  try {
+    const migrated = migrateProjectKeys(metadata, listProjectDirsSync())
+    writeMetadataSync(migrated)
+    return migrated
+  } catch {
+    return metadata
+  }
+}
+
 // --- Server Functions ---
 
 export const getMetadata = createServerFn({ method: 'GET' }).handler(
   async (): Promise<Metadata> => {
-    return readMetadataSync()
+    return readMetadataMigrated()
   },
 )
 
@@ -99,49 +157,53 @@ export const renameSession = createServerFn({ method: 'POST' })
   })
 
 export const pinProject = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectPath: string; pinned: boolean }) => input)
+  .inputValidator((input: { projectDir: string; pinned: boolean }) => input)
   .handler(async ({ data }) => {
-    const metadata = readMetadataSync()
-    const entry = { ...metadata.projects[data.projectPath], pinned: data.pinned || undefined }
+    const metadata = readMetadataMigrated()
+    const entry = { ...metadata.projects[data.projectDir], pinned: data.pinned || undefined }
+    // Pin = positive intent: clear any hide so the project stays visible.
+    if (data.pinned) entry.hidden = undefined
     const cleaned = cleanEntry(entry)
     if (cleaned) {
-      metadata.projects[data.projectPath] = cleaned
+      metadata.projects[data.projectDir] = cleaned
     } else {
-      delete metadata.projects[data.projectPath]
+      delete metadata.projects[data.projectDir]
     }
     writeMetadataSync(metadata)
   })
 
 export const hideProject = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectPath: string; hidden: boolean }) => input)
+  .inputValidator((input: { projectDir: string; hidden: boolean }) => input)
   .handler(async ({ data }) => {
-    const metadata = readMetadataSync()
-    const entry = { ...metadata.projects[data.projectPath], hidden: data.hidden || undefined }
+    const metadata = readMetadataMigrated()
+    const entry = { ...metadata.projects[data.projectDir], hidden: data.hidden || undefined }
+    // Deliberate hide: clear any pin so the two states stay mutually exclusive.
+    if (data.hidden) entry.pinned = undefined
     const cleaned = cleanEntry(entry)
     if (cleaned) {
-      metadata.projects[data.projectPath] = cleaned
+      metadata.projects[data.projectDir] = cleaned
     } else {
-      delete metadata.projects[data.projectPath]
+      delete metadata.projects[data.projectDir]
     }
     writeMetadataSync(metadata)
   })
 
 export const renameProject = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectPath: string; customName: string }) => input)
+  .inputValidator((input: { projectDir: string; customName: string }) => input)
   .handler(async ({ data }) => {
-    const metadata = readMetadataSync()
+    const metadata = readMetadataMigrated()
     const entry = {
-      ...metadata.projects[data.projectPath],
+      ...metadata.projects[data.projectDir],
       customName: data.customName || undefined,
     }
     const cleaned = cleanEntry(entry)
     if (cleaned) {
-      metadata.projects[data.projectPath] = cleaned
+      metadata.projects[data.projectDir] = cleaned
     } else {
-      delete metadata.projects[data.projectPath]
+      delete metadata.projects[data.projectDir]
     }
     writeMetadataSync(metadata)
   })
 
-// Exported for server-side use in sessions.api.ts
-export { readMetadataSync }
+// Exported for server-side use in sessions.api.ts / project-analytics.api.ts
+export { readMetadataSync, readMetadataMigrated }

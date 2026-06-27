@@ -61,7 +61,7 @@ function cleanEntry<T extends Record<string, unknown>>(entry: T): T | null {
 }
 
 /** List current on-disk project dir names (directories only). */
-function listProjectDirsSync(): string[] {
+export function listProjectDirsSync(): string[] {
   try {
     return fs
       .readdirSync(getProjectsDir(), { withFileTypes: true })
@@ -99,6 +99,31 @@ export function migrateProjectKeys(metadata: Metadata, dirNames: string[]): Meta
   }
 
   return { ...metadata, version: 2, projects }
+}
+
+/**
+ * Drop metadata.projects keys that no longer correspond to an on-disk project
+ * dir. Keys are encoded dir names (post-v2), so this is a safe exact-match.
+ * Writes only when something changed; idempotent; never throws.
+ */
+export function pruneOrphans(dirNames: string[]): void {
+  try {
+    const metadata = readMetadataSync()
+    const dirSet = new Set(dirNames)
+    const projects: Metadata['projects'] = {}
+    let changed = false
+    for (const [key, value] of Object.entries(metadata.projects)) {
+      if (dirSet.has(key)) {
+        projects[key] = value
+      } else {
+        changed = true
+      }
+    }
+    if (!changed) return
+    writeMetadataSync({ ...metadata, projects })
+  } catch {
+    // Pruning is best-effort and must never throw.
+  }
 }
 
 /**

@@ -2,17 +2,16 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { getProjectsDir } from '../utils/claude-path'
 
-// With lock dir: covers long Claude generations + user think time between turns.
-// Trade-off: orphaned lock dirs show as active for up to 15 min.
-const LOCK_THRESHOLD_MS = 900_000   // 15 minutes
-
-// Without lock dir: only mtime signals activity (lock dir may not exist yet or at all)
+// A session is "active" only when its JSONL file was written very recently.
+// NOTE (#29): <projectsDir>/<projectDir>/<sessionId> is the persistent
+// subagents/tool-results directory — created the first time a session uses
+// subagents and kept forever. It is NOT a liveness signal, so it must not gate
+// activity. We use a single, consistent mtime threshold instead.
 const MTIME_THRESHOLD_MS = 120_000  // 2 minutes — tight window, avoids stale ghosts
 
 /**
- * Check if a session is active by examining:
- * 1. Lock directory exists + mtime < 15 min (session open, may be mid-generation or idle)
- * 2. No lock dir but mtime < 2 min (lock dir may be delayed or absent)
+ * Check if a session is active by examining the JSONL file's mtime against a
+ * single inactivity threshold. Recent write (< 2 min) = active.
  */
 export async function isSessionActive(
   projectDirName: string,
@@ -20,17 +19,9 @@ export async function isSessionActive(
 ): Promise<boolean> {
   const projectsDir = getProjectsDir()
   const jsonlPath = path.join(projectsDir, projectDirName, `${sessionId}.jsonl`)
-  const lockDirPath = path.join(projectsDir, projectDirName, sessionId)
 
   const stat = await fs.promises.stat(jsonlPath).catch(() => null)
   if (!stat) return false
 
-  const age = Date.now() - stat.mtimeMs
-
-  // Lock directory exists — trust it with wider window (user may be reading)
-  const lockStat = await fs.promises.stat(lockDirPath).catch(() => null)
-  if (lockStat?.isDirectory()) return age <= LOCK_THRESHOLD_MS
-
-  // No lock dir — only recent JSONL writes count
-  return age <= MTIME_THRESHOLD_MS
+  return Date.now() - stat.mtimeMs <= MTIME_THRESHOLD_MS
 }

@@ -19,33 +19,15 @@ import { discoverSubagentFiles } from './subagent-discovery'
 /** Tool names that dispatch a subagent (Task = legacy, Agent = 2.1.68+) */
 const AGENT_DISPATCH_TOOL_NAMES = new Set(['Task', 'Agent'])
 
-const HEAD_LINES = 15
-const TAIL_LINES = 15
-
-/** Stream-scan a JSONL file for the last custom-title entry. Stops after finding it. */
-async function scanForCustomTitle(filePath: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let title: string | null = null
-    const stream = fs.createReadStream(filePath, { encoding: 'utf-8' })
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
-    rl.on('line', (line) => {
-      if (line.includes('"custom-title"')) {
-        try {
-          const parsed = JSON.parse(line)
-          if (parsed.type === 'custom-title' && parsed.customTitle) {
-            title = parsed.customTitle
-          }
-        } catch { /* skip malformed */ }
-      }
-    })
-    rl.on('close', () => resolve(title))
-    rl.on('error', () => resolve(null))
-  })
-}
-
 /**
- * Parse a session summary by reading only the first and last N lines.
- * This keeps memory usage minimal even for 500MB+ files.
+ * Parse a session summary in ONE streaming pass over the whole file.
+ *
+ * Reads the file line-by-line (bounded memory) and computes exact counts and
+ * token totals — sampling head/tail lines silently dropped sessions (#63) and
+ * produced wrong counts for long files (#64). Timestamps are sourced from
+ * top-level msg.timestamp, then from a file-history-snapshot's nested
+ * snapshot.timestamp, and finally fall back to the file mtime so no non-empty
+ * session is ever dropped. Only a file with zero parseable lines returns null.
  */
 export async function parseSummary(
   filePath: string,
@@ -53,15 +35,8 @@ export async function parseSummary(
   projectPath: string,
   projectName: string,
   fileSizeBytes: number,
+  mtimeMs: number,
 ): Promise<SessionSummary | null> {
-  const headLines = await readHeadLines(filePath, HEAD_LINES)
-  const tailLines = await readTailLines(filePath, TAIL_LINES)
-  // Deduplicate: for small files, head and tail overlap (each JSONL line is unique)
-  const headSet = new Set(headLines)
-  const allLines = [...headLines, ...tailLines.filter((l) => !headSet.has(l))]
-
-  if (allLines.length === 0) return null
-
   let startedAt: string | null = null
   let lastActiveAt: string | null = null
   let branch: string | null = null
@@ -74,64 +49,90 @@ export async function parseSummary(
   let firstUserMessage: string | null = null
   let totalInputTokens = 0
   let totalOutputTokens = 0
-
-  // Stream-scan for custom-title (from /rename). Stops as soon as found.
-  // /rename can happen at any point — tail-N doesn't work reliably.
+  // Last custom-title (from /rename) seen anywhere in the file.
   let claudeName: string | null = null
+  let parsedLineCount = 0
+
+  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' })
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
+
   try {
-    claudeName = await scanForCustomTitle(filePath)
-  } catch { /* skip */ }
+    for await (const line of rl) {
+      const msg = safeParse(line)
+      if (!msg) continue
+      parsedLineCount++
 
-  for (const line of allLines) {
-    const msg = safeParse(line)
-    if (!msg) continue
-    if (msg.type === 'file-history-snapshot') continue
+      // /rename title — keep the last one seen.
+      if (msg.type === 'custom-title') {
+        if (msg.customTitle) claudeName = msg.customTitle
+        continue
+      }
 
-    const ts = msg.timestamp
-    if (ts) {
-      if (!startedAt || ts < startedAt) startedAt = ts
-      if (!lastActiveAt || ts > lastActiveAt) lastActiveAt = ts
-    }
+      // file-history-snapshot: only a timestamp source (#63), never counted.
+      if (msg.type === 'file-history-snapshot') {
+        const snapTs = msg.snapshot?.timestamp
+        if (snapTs) {
+          if (!startedAt || snapTs < startedAt) startedAt = snapTs
+          if (!lastActiveAt || snapTs > lastActiveAt) lastActiveAt = snapTs
+        }
+        continue
+      }
 
-    if (msg.gitBranch && !branch) branch = msg.gitBranch
-    if (msg.cwd && !cwd) cwd = msg.cwd
-    if (msg.version && !version) version = msg.version
+      const ts = msg.timestamp
+      if (ts) {
+        if (!startedAt || ts < startedAt) startedAt = ts
+        if (!lastActiveAt || ts > lastActiveAt) lastActiveAt = ts
+      }
 
-    if (msg.type === 'user') {
-      userMessageCount++
-      if (!firstUserMessage) {
-        const content = msg.message?.content
-        if (Array.isArray(content)) {
-          const textBlock = content.find((c) => c.type === 'text' && c.text)
-          if (textBlock?.text) {
-            const text = textBlock.text.trim()
-            // Skip skill invocations and system-injected messages
-            const isSkillContent = text.startsWith('Base directory for this skill:')
-              || text.startsWith('<command-')
-              || text.startsWith('<system-')
-              || text.startsWith('---\nname:')
-            if (!isSkillContent) {
-              firstUserMessage = text.slice(0, 120)
+      if (msg.gitBranch && !branch) branch = msg.gitBranch
+      if (msg.cwd && !cwd) cwd = msg.cwd
+      if (msg.version && !version) version = msg.version
+
+      if (msg.type === 'user') {
+        userMessageCount++
+        if (!firstUserMessage) {
+          const content = msg.message?.content
+          if (Array.isArray(content)) {
+            const textBlock = content.find((c) => c.type === 'text' && c.text)
+            if (textBlock?.text) {
+              const text = textBlock.text.trim()
+              // Skip skill invocations and system-injected messages
+              const isSkillContent = text.startsWith('Base directory for this skill:')
+                || text.startsWith('<command-')
+                || text.startsWith('<system-')
+                || text.startsWith('---\nname:')
+              if (!isSkillContent) {
+                firstUserMessage = text.slice(0, 120)
+              }
             }
           }
         }
       }
-    }
-    if (msg.type === 'assistant') {
-      assistantMessageCount++
-      if (msg.message?.model && !model) model = msg.message.model
-      const usage = msg.message?.usage
-      if (usage) {
-        totalInputTokens += (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
-        totalOutputTokens += (usage.output_tokens ?? 0)
+      if (msg.type === 'assistant') {
+        assistantMessageCount++
+        if (msg.message?.model && !model) model = msg.message.model
+        const usage = msg.message?.usage
+        if (usage) {
+          totalInputTokens += (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+          totalOutputTokens += (usage.output_tokens ?? 0)
+        }
+      }
+      if (msg.type === 'user' || msg.type === 'assistant' || msg.type === 'system') {
+        totalMessageCount++
       }
     }
-    if (msg.type === 'user' || msg.type === 'assistant' || msg.type === 'system') {
-      totalMessageCount++
-    }
+  } finally {
+    rl.close()
+    stream.destroy()
   }
 
-  if (!startedAt) return null
+  // Genuinely empty file (nothing parseable) — drop it.
+  if (parsedLineCount === 0) return null
+
+  // No usable timestamp anywhere: fall back to the file's mtime (#63).
+  if (!startedAt) {
+    startedAt = new Date(mtimeMs).toISOString()
+  }
 
   const durationMs =
     startedAt && lastActiveAt
@@ -934,45 +935,6 @@ function mergeSubagentData(
 }
 
 // --- Helpers ---
-
-async function readHeadLines(
-  filePath: string,
-  count: number,
-): Promise<string[]> {
-  const lines: string[] = []
-  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
-
-  for await (const line of rl) {
-    lines.push(line)
-    if (lines.length >= count) break
-  }
-
-  stream.destroy()
-  rl.close()
-  return lines
-}
-
-async function readTailLines(
-  filePath: string,
-  count: number,
-): Promise<string[]> {
-  // Read the last ~64KB to get tail lines (enough for any reasonable line length)
-  const stat = await fs.promises.stat(filePath)
-  const readSize = Math.min(stat.size, 65536)
-  const buffer = Buffer.alloc(readSize)
-
-  const fd = await fs.promises.open(filePath, 'r')
-  try {
-    await fd.read(buffer, 0, readSize, Math.max(0, stat.size - readSize))
-  } finally {
-    await fd.close()
-  }
-
-  const text = buffer.toString('utf-8')
-  const lines = text.split('\n').filter(Boolean)
-  return lines.slice(-count)
-}
 
 function safeParse(line: string): RawJsonlMessage | null {
   try {

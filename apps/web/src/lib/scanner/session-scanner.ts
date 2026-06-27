@@ -44,7 +44,7 @@ const summaryCache = new Map<
 // first load ("loads forever"). Persisting it to disk lets cold starts reuse
 // prior parse results — entries are still mtime-guarded in the scan loop, so
 // parsing/naming/sort behavior is unchanged. Bump version to invalidate.
-const SUMMARY_CACHE_VERSION = 3
+const SUMMARY_CACHE_VERSION = 4
 let summaryCacheHydrated = false
 
 function summaryCachePath(): string {
@@ -93,11 +93,44 @@ function getSessionState(isActive: boolean, _mtimeMs: number): 'working' | 'wait
   return isActive ? 'working' : 'inactive'
 }
 
+// In-flight scan promise. Three pollers (active 3s, list 30s, paginated 5/30s)
+// can request a scan concurrently; with a cold in-memory cache that fired
+// overlapping full scans. Concurrent callers now await the SAME promise.
+let inFlightScan: Promise<SessionSummaryWithPath[]> | null = null
+
 /**
- * Internal scanning logic that returns summaries with their file paths.
- * Used by both public APIs below.
+ * Internal scanning entry point. Coalesces concurrent calls onto one scan so
+ * a cold cache never triggers overlapping full scans. Used by both public APIs.
  */
 async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
+  if (inFlightScan) return inFlightScan
+  inFlightScan = runScan()
+  try {
+    return await inFlightScan
+  } finally {
+    inFlightScan = null
+  }
+}
+
+/**
+ * Clear the summary cache: empties the in-memory Map, resets the hydration
+ * flag, and best-effort deletes the on-disk session-summaries.json. The unlink
+ * is scoped strictly to summaryCachePath() — metadata/settings are never touched.
+ */
+export function clearSummaryCache(): void {
+  summaryCache.clear()
+  summaryCacheHydrated = false
+  try {
+    fs.unlinkSync(summaryCachePath())
+  } catch {
+    // No cache file, or unlink failed — never fatal.
+  }
+}
+
+/**
+ * The actual scanning logic that returns summaries with their file paths.
+ */
+async function runScan(): Promise<SessionSummaryWithPath[]> {
   hydrateSummaryCache()
   const projects = await scanProjects()
   const claudeNames = readClaudeSessionNames()
@@ -127,13 +160,14 @@ async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
         continue
       }
 
-      // Parse summary from first/last lines
+      // Parse summary in a single full streaming pass
       const summary = await parseSummary(
         filePath,
         sessionId,
         project.decodedPath,
         project.projectName,
         stat.size,
+        stat.mtimeMs,
       )
 
       if (summary) {

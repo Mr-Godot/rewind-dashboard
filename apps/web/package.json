@@ -1,6 +1,6 @@
 {
   "name": "rewind-dashboard",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Local dashboard for Claude Code sessions — find, manage, and launch",
   "type": "module",
   "license": "MIT",

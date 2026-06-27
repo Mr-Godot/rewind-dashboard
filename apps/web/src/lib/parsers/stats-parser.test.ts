@@ -232,6 +232,7 @@ describe('parseStats', () => {
 
       const recentSession = {
         sessionId: 'new-session',
+        projectDir: '-proj',
         projectPath: '/proj',
         projectName: 'proj',
         branch: 'main',
@@ -344,6 +345,7 @@ describe('hour bucketing (via computeStatsFromSessions)', () => {
     // startedAt at 09:00 UTC
     const session = {
       sessionId: 'hour-test',
+      projectDir: '-proj',
       projectPath: '/proj',
       projectName: 'proj',
       branch: null,
@@ -387,6 +389,7 @@ describe('hour bucketing (via computeStatsFromSessions)', () => {
 
     const session = {
       sessionId: 'no-time',
+      projectDir: '-proj',
       projectPath: '/proj',
       projectName: 'proj',
       branch: null,

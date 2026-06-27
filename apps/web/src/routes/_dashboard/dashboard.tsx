@@ -212,7 +212,7 @@ function DashboardPage() {
                 key={session.sessionId}
                 session={session}
                 metadata={metadata?.sessions[session.sessionId]}
-                projectMeta={metadata?.projects[session.projectPath]}
+                projectMeta={metadata?.projects[session.projectDir]}
               />
             ))}
           </div>

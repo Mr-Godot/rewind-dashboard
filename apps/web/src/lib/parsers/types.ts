@@ -4,6 +4,8 @@ import { z } from 'zod'
 
 export interface SessionSummary {
   sessionId: string
+  /** Encoded on-disk project dir name (1:1, stable). Authoritative key for metadata. */
+  projectDir: string
   projectPath: string
   projectName: string
   branch: string | null

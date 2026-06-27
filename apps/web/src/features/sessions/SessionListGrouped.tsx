@@ -11,14 +11,14 @@ interface SessionListGroupedProps {
 
 function ProjectHeader({
   projectName,
-  projectPath,
+  projectDir,
   sessionCount,
   isPinned,
   isExpanded,
   onToggle,
 }: {
   projectName: string
-  projectPath: string
+  projectDir: string
   sessionCount: number
   isPinned: boolean
   isExpanded: boolean
@@ -33,7 +33,7 @@ function ProjectHeader({
         <button
           type="button"
           title={isPinned ? 'Unstar project' : 'Star project'}
-          onClick={() => pinMutation.mutate({ projectPath, pinned: !isPinned })}
+          onClick={() => pinMutation.mutate({ projectDir, pinned: !isPinned })}
           className={`shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors ${
             isPinned
               ? 'bg-amber-900/50 text-amber-400 hover:bg-amber-800/60'
@@ -58,7 +58,7 @@ function ProjectHeader({
         <button
           type="button"
           title="Hide project"
-          onClick={() => hideMutation.mutate({ projectPath, hidden: true })}
+          onClick={() => hideMutation.mutate({ projectDir, hidden: true })}
           className="rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:text-gray-300"
         >
           Hide
@@ -78,13 +78,13 @@ export function SessionListGrouped({ sessions, metadata }: SessionListGroupedPro
     }
   })
 
-  function toggleProject(projectPath: string) {
+  function toggleProject(projectDir: string) {
     setCollapsed((prev) => {
       const next = new Set(prev)
-      if (next.has(projectPath)) {
-        next.delete(projectPath)
+      if (next.has(projectDir)) {
+        next.delete(projectDir)
       } else {
-        next.add(projectPath)
+        next.add(projectDir)
       }
       try {
         localStorage.setItem('rewind-collapsed-projects', JSON.stringify([...next]))
@@ -96,13 +96,13 @@ export function SessionListGrouped({ sessions, metadata }: SessionListGroupedPro
   }
 
   const grouped = useMemo(() => {
-    const map = new Map<string, { projectName: string; projectPath: string; sessions: SessionSummary[] }>()
+    const map = new Map<string, { projectName: string; projectDir: string; sessions: SessionSummary[] }>()
     for (const s of sessions) {
-      const existing = map.get(s.projectPath)
+      const existing = map.get(s.projectDir)
       if (existing) {
         existing.sessions.push(s)
       } else {
-        map.set(s.projectPath, { projectName: s.projectName, projectPath: s.projectPath, sessions: [s] })
+        map.set(s.projectDir, { projectName: s.projectName, projectDir: s.projectDir, sessions: [s] })
       }
     }
     return [...map.values()]
@@ -113,16 +113,16 @@ export function SessionListGrouped({ sessions, metadata }: SessionListGroupedPro
   return (
     <div className="space-y-3">
       {grouped.map((group) => {
-        const isExpanded = !collapsed.has(group.projectPath)
+        const isExpanded = !collapsed.has(group.projectDir)
         return (
-          <div key={group.projectPath}>
+          <div key={group.projectDir}>
             <ProjectHeader
               projectName={group.projectName}
-              projectPath={group.projectPath}
+              projectDir={group.projectDir}
               sessionCount={group.sessions.length}
-              isPinned={projectMeta[group.projectPath]?.pinned ?? false}
+              isPinned={projectMeta[group.projectDir]?.pinned ?? false}
               isExpanded={isExpanded}
-              onToggle={() => toggleProject(group.projectPath)}
+              onToggle={() => toggleProject(group.projectDir)}
             />
             {isExpanded && (
               <div className="ml-4 mt-1 space-y-1 border-l-2 border-gray-800 pl-3">
@@ -131,7 +131,7 @@ export function SessionListGrouped({ sessions, metadata }: SessionListGroupedPro
                     key={session.sessionId}
                     session={session}
                     metadata={metadata?.sessions[session.sessionId]}
-                    projectMeta={projectMeta[session.projectPath]}
+                    projectMeta={projectMeta[session.projectDir]}
                   />
                 ))}
               </div>

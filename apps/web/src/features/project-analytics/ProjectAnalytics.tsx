@@ -39,12 +39,12 @@ export function ProjectAnalytics() {
   }
 
   const projectMeta = metadata?.projects ?? {}
-  const hiddenCount = allProjects.filter((p) => projectMeta[p.projectPath]?.hidden).length
+  const hiddenCount = allProjects.filter((p) => projectMeta[p.projectDir]?.hidden).length
 
   // Summary cards use visible projects only (unless showHidden)
   const visibleProjects = showHidden
     ? allProjects
-    : allProjects.filter((p) => !projectMeta[p.projectPath]?.hidden)
+    : allProjects.filter((p) => !projectMeta[p.projectDir]?.hidden)
 
   const totalSessions = visibleProjects.reduce((sum, p) => sum + p.totalSessions, 0)
   const totalDurationMs = visibleProjects.reduce((sum, p) => sum + p.totalDurationMs, 0)

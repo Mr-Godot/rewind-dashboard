@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { scanAllSessions, getActiveSessions } from '@/lib/scanner/session-scanner'
 import type { SessionSummary } from '@/lib/parsers/types'
-import { readMetadataSync } from '@/features/metadata/metadata.api'
+import { readMetadataMigrated } from '@/features/metadata/metadata.api'
 import type { Metadata } from '@/features/metadata/metadata.types'
 
 export const getSessionList = createServerFn({ method: 'GET' }).handler(
@@ -56,7 +56,7 @@ export async function paginateAndFilterSessions(
       .map(([k]) => k),
   )
   if (hiddenProjects.size > 0 && !project) {
-    allSessions = allSessions.filter((s) => s.isActive || !hiddenProjects.has(s.projectPath))
+    allSessions = allSessions.filter((s) => s.isActive || !hiddenProjects.has(s.projectDir))
   }
 
   // Extract distinct project names from (non-hidden) set
@@ -106,17 +106,17 @@ export async function paginateAndFilterSessions(
     // Pin boost only when starFirst is true
     const pinnedProjectTopSession = new Set<string>()
     if (starFirst && sort === 'latest') {
-      const pinnedProjectPaths = new Set(
+      const pinnedProjectDirs = new Set(
         Object.entries(projectMeta).filter(([, v]) => v.pinned).map(([k]) => k),
       )
-      if (pinnedProjectPaths.size > 0) {
+      if (pinnedProjectDirs.size > 0) {
         const bestPerProject = new Map<string, { id: string; time: number }>()
         for (const s of filtered) {
-          if (!pinnedProjectPaths.has(s.projectPath)) continue
+          if (!pinnedProjectDirs.has(s.projectDir)) continue
           const t = new Date(s.lastActiveAt).getTime()
-          const current = bestPerProject.get(s.projectPath)
+          const current = bestPerProject.get(s.projectDir)
           if (!current || t > current.time) {
-            bestPerProject.set(s.projectPath, { id: s.sessionId, time: t })
+            bestPerProject.set(s.projectDir, { id: s.sessionId, time: t })
           }
         }
         for (const v of bestPerProject.values()) pinnedProjectTopSession.add(v.id)
@@ -183,6 +183,6 @@ export const getPaginatedSessions = createServerFn({ method: 'GET' })
   .inputValidator((input: unknown) => paginatedSessionsInputSchema.parse(input))
   .handler(async ({ data }): Promise<PaginatedSessionsResult> => {
     const allSessions = await scanAllSessions()
-    const metadata = readMetadataSync()
+    const metadata = readMetadataMigrated()
     return paginateAndFilterSessions(allSessions, data, metadata)
   })

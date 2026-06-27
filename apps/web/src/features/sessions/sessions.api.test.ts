@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SessionSummary } from '@/lib/parsers/types'
+import type { Metadata } from '@/features/metadata/metadata.types'
 import { paginateAndFilterSessions } from './sessions.api'
 
 describe('paginateAndFilterSessions', () => {
@@ -7,6 +8,7 @@ describe('paginateAndFilterSessions', () => {
     overrides: Partial<SessionSummary> = {},
   ): SessionSummary => ({
     sessionId: `session-${Math.random()}`,
+    projectDir: '-path-to-project',
     projectPath: '/path/to/project',
     projectName: 'test-project',
     branch: 'main',
@@ -556,6 +558,50 @@ describe('paginateAndFilterSessions', () => {
       })
 
       expect(result.projects).toEqual([])
+    })
+  })
+
+  describe('hidden project filter (keyed by projectDir)', () => {
+    it('filters out sessions whose projectDir is hidden', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'visible', projectDir: '-dir-visible', projectName: 'visible' }),
+        createMockSession({ sessionId: 'hidden', projectDir: '-dir-hidden', projectName: 'hidden' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: {},
+        projects: { '-dir-hidden': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { page: 1, pageSize: 10, search: '', status: 'all', project: '', sort: 'latest' as const, starFirst: true },
+        metadata,
+      )
+
+      const ids = result.sessions.map((s) => s.sessionId)
+      expect(ids).toContain('visible')
+      expect(ids).not.toContain('hidden')
+    })
+
+    it('keeps a session visible when its projectDir is not hidden even if its decoded projectPath equals a stale key', async () => {
+      // Stale lossy key "C:/" is hidden, but the live project is keyed by its dir "C--".
+      const sessions = [
+        createMockSession({ sessionId: 'live', projectDir: 'C--', projectPath: 'C:/', projectName: 'root' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: {},
+        projects: { 'C:/': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { page: 1, pageSize: 10, search: '', status: 'all', project: '', sort: 'latest' as const, starFirst: true },
+        metadata,
+      )
+
+      expect(result.sessions.map((s) => s.sessionId)).toContain('live')
     })
   })
 })

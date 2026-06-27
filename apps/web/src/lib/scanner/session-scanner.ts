@@ -44,7 +44,7 @@ const summaryCache = new Map<
 // first load ("loads forever"). Persisting it to disk lets cold starts reuse
 // prior parse results — entries are still mtime-guarded in the scan loop, so
 // parsing/naming/sort behavior is unchanged. Bump version to invalidate.
-const SUMMARY_CACHE_VERSION = 2
+const SUMMARY_CACHE_VERSION = 3
 let summaryCacheHydrated = false
 
 function summaryCachePath(): string {
@@ -123,7 +123,7 @@ async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
         const active = await isSessionActive(project.dirName, sessionId)
         const claudeName = claudeNames.get(sessionId) ?? cached.summary.claudeName ?? null
         const sessionState = getSessionState(active, stat.mtimeMs)
-        summaries.push({ ...cached.summary, isActive: active, sessionState, claudeName, filePath })
+        summaries.push({ ...cached.summary, projectDir: project.dirName, isActive: active, sessionState, claudeName, filePath })
         continue
       }
 
@@ -138,6 +138,7 @@ async function scanSessionsInternal(): Promise<SessionSummaryWithPath[]> {
 
       if (summary) {
         const active = await isSessionActive(project.dirName, sessionId)
+        summary.projectDir = project.dirName
         summary.isActive = active
         summary.sessionState = getSessionState(active, stat.mtimeMs)
         summary.claudeName = claudeNames.get(sessionId) ?? summary.claudeName ?? null

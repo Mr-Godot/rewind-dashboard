@@ -31,6 +31,7 @@ vi.mock('node:fs', () => ({
 function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
     sessionId: 'session-abc',
+    projectDir: '-Users-user-myproject',
     projectPath: '/Users/user/myproject',
     projectName: 'myproject',
     branch: 'main',

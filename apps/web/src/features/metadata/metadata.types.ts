@@ -12,7 +12,7 @@ export const ProjectMetadataEntrySchema = z.object({
 })
 
 export const MetadataSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   updatedAt: z.string().datetime().optional(),
   sessions: z.record(z.string(), SessionMetadataEntrySchema).default({}),
   projects: z.record(z.string(), ProjectMetadataEntrySchema).default({}),
@@ -23,7 +23,7 @@ export type ProjectMetadataEntry = z.infer<typeof ProjectMetadataEntrySchema>
 export type Metadata = z.infer<typeof MetadataSchema>
 
 export const DEFAULT_METADATA: Metadata = {
-  version: 1,
+  version: 2,
   sessions: {},
   projects: {},
 }

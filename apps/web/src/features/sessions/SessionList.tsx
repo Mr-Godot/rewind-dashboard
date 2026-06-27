@@ -80,15 +80,15 @@ export function SessionList() {
   // Client-side filter hidden projects from dropdown
   const visibleProjects = useMemo(() => {
     const projects = paginatedData?.projects ?? []
-    const hiddenPaths = new Set(
+    const hiddenDirs = new Set(
       Object.entries(metadata?.projects ?? {})
         .filter(([, v]) => v.hidden)
         .map(([k]) => k),
     )
-    if (hiddenPaths.size === 0) return projects
+    if (hiddenDirs.size === 0) return projects
     const hiddenNames = new Set<string>()
     for (const s of paginatedData?.sessions ?? []) {
-      if (hiddenPaths.has(s.projectPath)) hiddenNames.add(s.projectName)
+      if (hiddenDirs.has(s.projectDir)) hiddenNames.add(s.projectName)
     }
     return projects.filter((p) => !hiddenNames.has(p))
   }, [paginatedData, metadata])
@@ -141,7 +141,7 @@ export function SessionList() {
               key={session.sessionId}
               session={session}
               metadata={metadata?.sessions[session.sessionId]}
-              projectMeta={metadata?.projects[session.projectPath]}
+              projectMeta={metadata?.projects[session.projectDir]}
             />
           ))
         )}

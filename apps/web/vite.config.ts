@@ -163,13 +163,14 @@ function launchSessionPlugin(): Plugin {
   }
 }
 
-export default defineConfig(({ command }) => {
-  // Production builds must use React's production JSX transform. Vite defaults
-  // builds to mode=production, but @vitejs/plugin-react keys its dev-vs-prod JSX
-  // runtime on process.env.NODE_ENV — if it's unset, the SSR bundle emits
-  // `jsxDEV` and the built server crashes at runtime ("jsxDEV is not a
-  // function"). Pin NODE_ENV=production for builds (respect an explicit override).
-  if (command === 'build' && !process.env.NODE_ENV) {
+export default defineConfig(({ command, mode }) => {
+  // Production builds must use React's production JSX transform. @vitejs/plugin-react
+  // keys its dev-vs-prod JSX runtime on process.env.NODE_ENV — if it is unset OR
+  // inherited as "development" from the shell, the SSR bundle emits `jsxDEV` and the
+  // built server crashes at runtime ("jsxDEV is not a function"). `vite build` is a
+  // production build by default, so force NODE_ENV=production for any non-development
+  // build mode, overriding a stray ambient value (respect an explicit --mode development).
+  if (command === 'build' && mode !== 'development') {
     process.env.NODE_ENV = 'production'
   }
   return {

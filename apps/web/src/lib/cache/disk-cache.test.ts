@@ -1,14 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { z } from 'zod'
 import { readDiskCache, writeDiskCache, getCacheDir } from './disk-cache'
 
 describe('disk-cache', () => {
   let testCacheFiles: string[]
+  // Redirect os.homedir() (and thus getCacheDir) to a throwaway dir so these
+  // tests never read, write, or delete the real ~/.claude-dashboard/cache.
+  let testHome: string
+  let savedUserProfile: string | undefined
+  let savedHome: string | undefined
 
   beforeEach(() => {
     testCacheFiles = []
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'rewind-cache-test-'))
+    savedUserProfile = process.env.USERPROFILE
+    savedHome = process.env.HOME
+    process.env.USERPROFILE = testHome
+    process.env.HOME = testHome
   })
 
   afterEach(() => {
@@ -36,6 +47,17 @@ describe('disk-cache', () => {
           }
         }
       }
+    }
+
+    // Restore env and remove the throwaway home dir
+    if (savedUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = savedUserProfile
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    try {
+      fs.rmSync(testHome, { recursive: true, force: true })
+    } catch {
+      // Ignore cleanup errors
     }
   })
 

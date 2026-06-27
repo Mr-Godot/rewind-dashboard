@@ -179,6 +179,11 @@ export default defineConfig(({ command }) => {
         ignored: ['**/routeTree.gen.ts'],
       },
     },
+    // better-sqlite3 is an optional native addon loaded via createRequire on the
+    // server only. Mark it external so Vite never tries to bundle the .node file.
+    ssr: {
+      external: ['better-sqlite3'],
+    },
     plugins: [
       launchSessionPlugin(),
       tsConfigPaths(),

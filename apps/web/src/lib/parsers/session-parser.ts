@@ -936,7 +936,7 @@ function mergeSubagentData(
 
 // --- Helpers ---
 
-function safeParse(line: string): RawJsonlMessage | null {
+export function safeParse(line: string): RawJsonlMessage | null {
   try {
     return JSON.parse(line) as RawJsonlMessage
   } catch {
@@ -944,7 +944,7 @@ function safeParse(line: string): RawJsonlMessage | null {
   }
 }
 
-function extractToolResultText(block: {
+export function extractToolResultText(block: {
   text?: string
   content?: string | Array<{ type: string; text?: string }>
 }): string | undefined {

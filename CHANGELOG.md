@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.6.0
+
+### Fixed
+- **Sessions shown as "active" that were not** — liveness was inferred from the transcript file's modification time, but measured drift between that timestamp and the last real message reaches 174 days, and an external process touches these files hourly without appending anything. Liveness now comes from Claude Code's own process registry (`~/.claude/sessions/*.json`): a session is live only when its recorded process is actually running. A live-but-idle session reads as **waiting**, distinct from **working**, and no longer restarts a running timer
+- **`/rename` names not showing, sessions labelled `agents-0a`** — the process registry only exists for sessions whose process is still alive, and it also carries auto-derived placeholder names. That whole name source is gone; the durable name is the transcript's own title entry, which survives process exit, reboot and folder moves. Session titles now resolve identically on the list and the detail page
+- **First message missing from session titles** — messages with plain-text content were skipped entirely, and injected boilerplate turns were mistaken for the first real message
+- **Search results in arbitrary order** — hits are now newest-first. Each session is represented by its most recent match, so the date and the snippet always describe the same message, and the result limit counts sessions rather than raw matches
+- **Search failing silently** — every error collapsed into an empty result set, indistinguishable from "nothing matched". Failures are now visible, the index reports how far it has covered, and a rejected search no longer retries forever
+- **Slow loads** — statistics re-parsed the entire 1 GB transcript corpus on every request. Per-session results are now cached against a fingerprint that includes subagent transcripts. The 3-second liveness poll no longer triggers a full scan of every session file
+- **Projects duplicated after moving a folder** — a project is now identified by the working directory recorded in its transcripts rather than by a lossy encoding of its path. Projects whose folder no longer exists are flagged instead of disappearing, and their sessions stay listed and searchable
+- **Launching a session from a folder that no longer exists** — previously spawned a terminal in a dead directory and failed silently; it now refuses with a clear message naming the missing path
+- **Blank white panels** — empty results render a proper card explaining what happened and how to clear it, refreshing keeps the previous rows visible instead of blanking, and a stale saved filter no longer flashes "no matches" before correcting itself. An unset theme preference now resolves to dark
+- **Test suite overwriting real data** — the end-to-end suite pointed the scanner at fixtures but left every cache path aimed at the real dashboard directory, so running it pruned the live search index down to three fixture sessions. All dashboard paths now honour the same environment override
+
+### Note
+On first launch this version re-reads every session once to rebuild its caches, which takes a few seconds. The conversation index rebuilds on the first search.
+
 ## v1.5.0
 
 ### Added

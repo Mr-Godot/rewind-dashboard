@@ -12,6 +12,7 @@ import { HourlyDistribution } from '@/features/stats/HourlyDistribution'
 import { SessionCard } from '@/features/sessions/SessionCard'
 import { ExportDropdown } from '@/components/ExportDropdown'
 import { TerminalLoader } from '@/components/TerminalLoader'
+import { EmptyState } from '@/components/EmptyState'
 import {
   dailyActivityToCSV,
   dailyTokensToCSV,
@@ -218,7 +219,13 @@ function DashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="py-8 text-center text-sm text-gray-500">No sessions found</div>
+          <div className="mt-3">
+            <EmptyState
+              compact
+              title="No sessions found"
+              hint="Sessions appear here as soon as Claude Code writes to ~/.claude/projects."
+            />
+          </div>
         )}
       </div>
 

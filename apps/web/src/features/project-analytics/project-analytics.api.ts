@@ -7,6 +7,10 @@ export interface ProjectAnalytics {
   projectDir: string
   projectPath: string
   projectName: string
+  /** Exact cwd recorded by the most recent session of this dir, or null. */
+  realPath: string | null
+  /** False only when realPath is known AND no longer exists on disk. */
+  pathExists: boolean
   totalSessions: number
   activeSessions: number
   totalMessages: number
@@ -40,10 +44,18 @@ export function aggregateProjectAnalytics(
     if (sessions.length === 0) continue
 
     const firstSession = sessions[0]
+    // Identity comes from the MOST RECENT session: a dir that moved records its
+    // current path last, and a stale flag must reflect that latest path.
+    const latestSession = sessions.reduce(
+      (latest, s) => (s.lastActiveAt > latest.lastActiveAt ? s : latest),
+      firstSession,
+    )
     projects.push({
       projectDir,
       projectPath: firstSession.projectPath,
       projectName: firstSession.projectName ?? firstSession.projectPath.split('/').pop() ?? 'Unknown',
+      realPath: latestSession.realPath,
+      pathExists: latestSession.pathExists,
       totalSessions: sessions.length,
       activeSessions: sessions.filter((s) => s.isActive).length,
       totalMessages: sessions.reduce((sum, s) => sum + s.messageCount, 0),

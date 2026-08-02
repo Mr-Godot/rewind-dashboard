@@ -6,7 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { spawn, execSync } from 'node:child_process'
 import { homedir, tmpdir, platform } from 'node:os'
 import { join } from 'node:path'
-import { readdirSync, existsSync, writeFileSync, unlinkSync, chmodSync, openSync, readSync, closeSync } from 'node:fs'
+import { writeFileSync, unlinkSync, chmodSync } from 'node:fs'
+import { resolveLaunchTarget } from './src/lib/launch/launch-session'
 
 function launchSessionPlugin(): Plugin {
   return {
@@ -22,57 +23,16 @@ function launchSessionPlugin(): Plugin {
         req.on('data', (c: Buffer) => chunks.push(c))
         req.on('end', () => {
           try {
-            const { sessionId, cwd } = JSON.parse(Buffer.concat(chunks).toString())
-
-            // Validate sessionId is a UUID to prevent command injection
-            const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-            if (!sessionId || typeof sessionId !== 'string' || !uuidRe.test(sessionId)) {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: 'Invalid sessionId: must be a valid UUID' }))
+            // All validation, the session-dir lookup and the dead-cwd guard live
+            // in one tested module. A non-ok decision spawns NOTHING.
+            const target = resolveLaunchTarget(JSON.parse(Buffer.concat(chunks).toString()), homedir())
+            if (!target.ok) {
+              res.writeHead(target.status, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: target.error }))
               return
             }
+            const { sessionId, sessionCwd } = target
 
-            // Validate cwd if provided: must be absolute, no traversal, no shell metacharacters
-            if (cwd != null) {
-              if (typeof cwd !== 'string') {
-                res.writeHead(400, { 'Content-Type': 'application/json' })
-                res.end(JSON.stringify({ error: 'Invalid cwd: must be a string' }))
-                return
-              }
-              const isAbsolute = /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith('/')
-              const hasTraversal = /(^|[\\/])\.\.($|[\\/])/.test(cwd)
-              const shellMeta = /[;&|`$(){}!#*?<>\n\r]/.test(cwd)
-              if (!isAbsolute || hasTraversal || shellMeta) {
-                res.writeHead(400, { 'Content-Type': 'application/json' })
-                res.end(JSON.stringify({ error: 'Invalid cwd: must be absolute path without traversal or shell metacharacters' }))
-                return
-              }
-            }
-
-            const home = homedir()
-            const projDir = join(home, '.claude', 'projects')
-            let sessionCwd = cwd || home
-            try {
-              const dirs = readdirSync(projDir)
-              for (const d of dirs) {
-                const jsonl = join(projDir, d, sessionId + '.jsonl')
-                if (existsSync(jsonl)) {
-                  const fd = openSync(jsonl, 'r')
-                  const buf = Buffer.alloc(4096)
-                  const bytesRead = readSync(fd, buf, 0, 4096, 0)
-                  closeSync(fd)
-                  const headLines = buf.toString('utf8', 0, bytesRead).split('\n')
-                  for (const headLine of headLines) {
-                    if (!headLine.trim()) continue
-                    try {
-                      const parsed = JSON.parse(headLine)
-                      if (parsed.cwd) { sessionCwd = parsed.cwd; break }
-                    } catch {}
-                  }
-                  if (sessionCwd !== (cwd || home)) break
-                }
-              }
-            } catch {}
             const resumeCmd = `claude --resume ${sessionId} --dangerously-skip-permissions`
             const isWin = platform() === 'win32'
             let child

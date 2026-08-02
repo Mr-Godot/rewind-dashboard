@@ -15,7 +15,9 @@ export async function scanProjects(): Promise<ProjectInfo[]> {
   let entries: string[]
   try {
     entries = await fs.promises.readdir(projectsDir)
-  } catch {
+  } catch (err) {
+    // An unreadable projects dir used to yield a silently empty dashboard.
+    console.error('[project-scanner] failed to read projects dir:', err)
     return []
   }
 

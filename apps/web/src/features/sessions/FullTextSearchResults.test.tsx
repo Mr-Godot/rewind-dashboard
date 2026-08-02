@@ -238,6 +238,107 @@ describe('FullTextSearchResults', () => {
     expect(searchMock).toHaveBeenCalledWith({ data: { query: 'acme', limit: 50 } })
   })
 
+  describe('index staleness', () => {
+    it('warns when a listed session is NEWER than the index high-water mark', async () => {
+      searchMock.mockResolvedValue(
+        result([hit('s1')], { indexedThrough: '2026-07-25T15:47:10.106Z' }),
+      )
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults
+            query="acme"
+            existingIds={new Set()}
+            newestSessionAt="2026-08-01T10:00:00.000Z"
+          />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('fts-stale-notice')).toBeTruthy()
+      })
+      expect(screen.getByText(/newer sessions are not\s+searchable yet/i)).toBeTruthy()
+      // The results are still rendered: this is additive, not a replacement.
+      expect(screen.getByText(/some matching text/)).toBeTruthy()
+    })
+
+    it('warns on the ZERO-hit branch too, so a stale index never reads as a definitive no-match', async () => {
+      searchMock.mockResolvedValue(result([], { indexedThrough: '2026-07-25T15:47:10.106Z' }))
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults
+            query="acme"
+            existingIds={new Set()}
+            newestSessionAt="2026-08-01T10:00:00.000Z"
+          />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/No conversation text matched/i)).toBeTruthy()
+      })
+      expect(screen.getByTestId('fts-stale-notice')).toBeTruthy()
+    })
+
+    it('stays silent when the index already covers the newest listed session', async () => {
+      searchMock.mockResolvedValue(
+        result([hit('s1')], { indexedThrough: '2026-08-02T00:00:00.000Z' }),
+      )
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults
+            query="acme"
+            existingIds={new Set()}
+            newestSessionAt="2026-08-01T10:00:00.000Z"
+          />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/some matching text/)).toBeTruthy()
+      })
+      expect(screen.queryByTestId('fts-stale-notice')).toBeNull()
+    })
+
+    it('stays silent when the provider reports no high-water mark at all', async () => {
+      searchMock.mockResolvedValue(result([hit('s1')], { indexedThrough: null }))
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults
+            query="acme"
+            existingIds={new Set()}
+            newestSessionAt="2026-08-01T10:00:00.000Z"
+          />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/some matching text/)).toBeTruthy()
+      })
+      expect(screen.queryByTestId('fts-stale-notice')).toBeNull()
+    })
+
+    it('stays silent when the caller supplies no newest-session reference', async () => {
+      searchMock.mockResolvedValue(
+        result([hit('s1')], { indexedThrough: '2026-07-25T15:47:10.106Z' }),
+      )
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults query="acme" existingIds={new Set()} />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText(/some matching text/)).toBeTruthy()
+      })
+      expect(screen.queryByTestId('fts-stale-notice')).toBeNull()
+    })
+  })
+
   it('stays idle (and issues no request) below the minimum query length', async () => {
     searchMock.mockResolvedValue(result([]))
 

@@ -300,29 +300,58 @@ describe('readLiveSessions', () => {
   })
 
   describe('memoization', () => {
+    /** Production path: the default probe, with process.kill stubbed alive. */
+    function stubKillAlive() {
+      return vi.spyOn(process, 'kill').mockReturnValue(true)
+    }
+
     it('performs one readdir for two calls inside the 1000ms window', () => {
       mockSessionsDir({
         '111.json': JSON.stringify({ pid: 111, sessionId: 's-1', status: 'idle', updatedAt: 1 }),
       })
+      const kill = stubKillAlive()
 
-      const first = readLiveSessions(alive)
+      const first = readLiveSessions()
       vi.setSystemTime(1_700_000_000_999)
-      const second = readLiveSessions(alive)
+      const second = readLiveSessions()
 
       expect(mockReaddir).toHaveBeenCalledTimes(1)
       expect(second).toBe(first)
+      kill.mockRestore()
     })
 
     it('re-reads once the memo window has elapsed', () => {
       mockSessionsDir({
         '111.json': JSON.stringify({ pid: 111, sessionId: 's-1', status: 'idle', updatedAt: 1 }),
       })
+      const kill = stubKillAlive()
 
-      readLiveSessions(alive)
+      readLiveSessions()
       vi.setSystemTime(1_700_000_001_000)
-      readLiveSessions(alive)
+      readLiveSessions()
 
       expect(mockReaddir).toHaveBeenCalledTimes(2)
+      kill.mockRestore()
+    })
+
+    it('does NOT serve an injected probe from the memo, in either direction', () => {
+      mockSessionsDir({
+        '111.json': JSON.stringify({ pid: 111, sessionId: 's-1', status: 'idle', updatedAt: 1 }),
+      })
+
+      // Two different probes inside one memo window must not share a result...
+      const live = readLiveSessions(alive)
+      const gone = readLiveSessions(dead)
+
+      expect([...live.sessions.keys()]).toEqual(['s-1'])
+      expect(gone.sessions.size).toBe(0)
+      expect(mockReaddir).toHaveBeenCalledTimes(2)
+
+      // ...and an injected probe must not poison the memo the default reads.
+      const kill = stubKillAlive()
+      const production = readLiveSessions()
+      expect([...production.sessions.keys()]).toEqual(['s-1'])
+      kill.mockRestore()
     })
   })
 

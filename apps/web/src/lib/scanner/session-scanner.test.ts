@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as path from 'node:path'
+import { mergeLiveStates } from '@/features/sessions/active-merge'
+import { deriveProjectName } from '../utils/project-identity'
 import type { SessionSummary } from '../parsers/types'
 import type { LiveSession, LiveSessionsResult } from './live-sessions'
 import type { ProjectInfo } from './project-scanner'
@@ -32,6 +34,10 @@ vi.mock('node:fs', () => ({
     stat: vi.fn(),
   },
   readdirSync: vi.fn(() => []),
+  existsSync: vi.fn(() => true),
+  statSync: vi.fn(() => {
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  }),
   readFileSync: vi.fn(() => {
     throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
   }),
@@ -50,6 +56,8 @@ function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     projectDir: '-Users-user-myproject',
     projectPath: '/Users/user/myproject',
     projectName: 'myproject',
+    realPath: null,
+    pathExists: true,
     branch: 'main',
     cwd: '/Users/user/myproject',
     startedAt: '2026-01-01T10:00:00.000Z',
@@ -81,7 +89,7 @@ function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
 }
 
 function makeLiveRecord(sessionId: string, status: string): LiveSession {
-  return { sessionId, pid: 1234, status, updatedAt: NOW }
+  return { sessionId, pid: 1234, status, updatedAt: NOW, cwd: '/Users/user/myproject' }
 }
 
 /** A registry snapshot: `{ sessionId: status }` for every live process. */
@@ -126,6 +134,7 @@ describe('session-scanner', () => {
       mockParseSummary: parseSummary as ReturnType<typeof vi.fn>,
       mockReadLiveSessions,
       mockStat: fs.promises.stat as ReturnType<typeof vi.fn>,
+      mockStatSync: fs.statSync as unknown as ReturnType<typeof vi.fn>,
       fs,
     }
   }
@@ -618,11 +627,10 @@ describe('session-scanner', () => {
       expect(persistCount(fs)).toBe(1)
     })
 
-    it('hydrates a pre-existing v4 cache file and then writes nothing', async () => {
+    it('hydrates a pre-existing current-version cache file and then writes nothing', async () => {
       const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
 
-      // SUMMARY_CACHE_VERSION is still 4 — P3 changed no persisted shape.
-      seedDiskCache(fs, 4, 1000)
+      seedDiskCache(fs, 5, 1000)
       mockScanProjects.mockResolvedValue([makeProject()])
       mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
       mockParseSummary.mockResolvedValue(makeSummary())
@@ -632,6 +640,103 @@ describe('session-scanner', () => {
       expect(result).toHaveLength(1)
       expect(mockParseSummary).not.toHaveBeenCalled()
       expect(persistCount(fs)).toBe(0)
+    })
+
+    it('treats a version:4 payload as a COLD cache and re-parses (evicts poisoned claudeNames)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      // v4 entries were written while the sessions/*.json tier could poison
+      // claudeName; their mtimes never change, so only the version bump evicts them.
+      seedDiskCache(fs, 4, 1000)
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ claudeName: 'kanban-board' }))
+
+      const result = await scanAllSessions()
+
+      expect(mockParseSummary).toHaveBeenCalledTimes(1)
+      expect(result[0].claudeName).toBe('kanban-board')
+      expect(persistCount(fs)).toBe(1)
+    })
+  })
+
+  describe('session names (the durable JSONL custom-title is the only source)', () => {
+    /**
+     * Seeds ~/.claude/sessions/<id>.json — the tier P6 deleted. It carried
+     * derived junk ('agents-f6') and stale values that shadowed the real title.
+     */
+    function seedSessionsJson(fs: typeof import('node:fs'), name: string, nameSource = 'derived') {
+      const readdirSync = fs.readdirSync as unknown as ReturnType<typeof vi.fn>
+      const readFileSync = fs.readFileSync as unknown as ReturnType<typeof vi.fn>
+      readdirSync.mockImplementation(() => ['session-abc.json'])
+      readFileSync.mockImplementation((p: string) => {
+        if (String(p).includes('sessions')) {
+          return JSON.stringify({ sessionId: 'session-abc', name, nameSource })
+        }
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      })
+    }
+
+    it('never lets a sessions/*.json name (nameSource: derived) reach summary.claudeName', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      seedSessionsJson(fs, 'agents-f6')
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ claudeName: null }))
+
+      const result = await scanAllSessions()
+
+      expect(result[0].claudeName).toBeNull()
+      // The whole tier is gone: the sessions dir is never even read.
+      const readdirSync = fs.readdirSync as unknown as ReturnType<typeof vi.fn>
+      expect(readdirSync).not.toHaveBeenCalled()
+    })
+
+    it('JSONL custom-title wins over a stale sessions/*.json name', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      // The exact defect on disk today: cached 'agents-f6' shadowing 'kanban-board'.
+      seedSessionsJson(fs, 'agents-f6')
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ claudeName: 'kanban-board' }))
+
+      const result = await scanAllSessions()
+
+      expect(result[0].claudeName).toBe('kanban-board')
+    })
+
+    it('cache HIT does not resurrect a claudeName absent from the cached summary', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ claudeName: null }))
+
+      const cold = await scanAllSessions()
+      expect(cold[0].claudeName).toBeNull()
+
+      // A name appears in sessions/*.json AFTER the entry was cached.
+      seedSessionsJson(fs, 'agents-f6')
+      const warm = await scanAllSessions()
+
+      expect(mockParseSummary).toHaveBeenCalledTimes(1) // cache hit
+      expect(warm[0].claudeName).toBeNull()
+    })
+
+    it('cache HIT preserves the JSONL custom-title captured at parse time', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ claudeName: 'kanban-board' }))
+
+      await scanAllSessions()
+      const warm = await scanAllSessions()
+
+      expect(mockParseSummary).toHaveBeenCalledTimes(1)
+      expect(warm[0].claudeName).toBe('kanban-board')
     })
   })
 
@@ -773,6 +878,184 @@ describe('session-scanner', () => {
     })
   })
 
+  describe('project identity from the recorded cwd', () => {
+    const REWIND_WORK = 'C:\\Users\\dev\\_work\\rewind-dashboard'
+
+    // vi.clearAllMocks() keeps implementations, so restore the module defaults.
+    beforeEach(async () => {
+      const fs = await import('node:fs')
+      ;(fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      })
+      ;(fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true)
+    })
+
+    it('re-derives realPath/projectName for a CACHED summary (else the fix is a no-op for ~450 sessions)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      // A v5 on-disk entry whose persisted identity is the old lossy-decode junk.
+      const readFileSync = fs.readFileSync as unknown as ReturnType<typeof vi.fn>
+      readFileSync.mockImplementationOnce(() =>
+        JSON.stringify({
+          version: 5,
+          entries: {
+            'session-abc': {
+              mtimeMs: 1000,
+              summary: makeSummary({
+                projectPath: 'C:/Users-dev--work-rewind-dashboard',
+                projectName: 'work-rewind-dashboard',
+                cwd: REWIND_WORK,
+              }),
+            },
+          },
+        }),
+      )
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+
+      const result = await scanAllSessions()
+
+      expect(mockParseSummary).not.toHaveBeenCalled() // pure cache hit, mtime unchanged
+      expect(result[0].realPath).toBe(REWIND_WORK)
+      expect(result[0].projectName).toBe('rewind-dashboard')
+      // projectPath stays the lookup key used by session-detail/chat findSessionFile.
+      expect(result[0].projectPath).toBe('C:/Users-dev--work-rewind-dashboard')
+    })
+
+    it('resolves realPath without ever reading a JSONL head (the rejected 8 KB heuristic)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([
+        makeProject({ sessionFiles: ['old.jsonl', 'new.jsonl'] }),
+      ])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockImplementation(async (_p: string, id: string) =>
+        makeSummary({
+          sessionId: id,
+          lastActiveAt: id === 'new' ? '2026-02-01T00:00:00.000Z' : '2026-01-01T00:00:00.000Z',
+          // The cwd only appears deep in the file; a head read would miss it.
+          cwd: REWIND_WORK,
+        }),
+      )
+
+      const result = await scanAllSessions()
+
+      expect(result.every((s) => s.realPath === REWIND_WORK)).toBe(true)
+      const readFileSync = fs.readFileSync as unknown as ReturnType<typeof vi.fn>
+      const jsonlReads = readFileSync.mock.calls.filter((args) => String(args[0]).endsWith('.jsonl'))
+      expect(jsonlReads).toHaveLength(0)
+    })
+
+    it('falls back to the next session when the newest recorded no cwd at all', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([
+        makeProject({ sessionFiles: ['old.jsonl', 'new.jsonl'] }),
+      ])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockImplementation(async (_p: string, id: string) =>
+        makeSummary({
+          sessionId: id,
+          lastActiveAt: id === 'new' ? '2026-02-01T00:00:00.000Z' : '2026-01-01T00:00:00.000Z',
+          cwd: id === 'new' ? null : REWIND_WORK,
+        }),
+      )
+
+      const result = await scanAllSessions()
+
+      expect(result.every((s) => s.realPath === REWIND_WORK)).toBe(true)
+    })
+
+    it('gives two dirs whose cwds share a basename two DISTINCT names in one scan', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([
+        makeProject({ dirName: 'C--Users-dev--work-rewind-dashboard', sessionFiles: ['work.jsonl'] }),
+        makeProject({ dirName: 'C--Users-dev--CODE-rewind-dashboard', sessionFiles: ['code.jsonl'] }),
+      ])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockImplementation(async (_p: string, id: string) =>
+        makeSummary({
+          sessionId: id,
+          cwd: id === 'work' ? REWIND_WORK : 'C:\\Users\\dev\\_CODE\\rewind-dashboard',
+        }),
+      )
+
+      const result = await scanAllSessions()
+
+      const work = result.find((s) => s.sessionId === 'work')
+      const code = result.find((s) => s.sessionId === 'code')
+      expect(work?.projectName).toBe('_work/rewind-dashboard')
+      expect(code?.projectName).toBe('_CODE/rewind-dashboard')
+    })
+
+    it('produces a non-empty name for the drive-root project (cwd C:\\)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject({ dirName: 'C--' })])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ cwd: 'C:\\' }))
+
+      const result = await scanAllSessions()
+
+      expect(result[0].projectName).not.toBe('')
+      expect(result[0].realPath).toBe('C:\\')
+    })
+
+    it('matches the name session-detail derives from the same cwd (list/detail parity)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ cwd: REWIND_WORK }))
+
+      const result = await scanAllSessions()
+
+      // session-detail.api.resolveDetailProjectName() is proven to be exactly
+      // deriveProjectName(cwd) in session-detail.api.test.ts, so this closes the
+      // list/detail loop without importing the server fn into the scanner test.
+      expect(result[0].projectName).toBe(deriveProjectName(REWIND_WORK))
+    })
+
+    it('flags a dir whose recorded cwd is gone but STILL LISTS its sessions', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      const existsSync = fs.existsSync as unknown as ReturnType<typeof vi.fn>
+      existsSync.mockReturnValueOnce(false)
+      mockScanProjects.mockResolvedValue([
+        makeProject({ sessionFiles: ['a.jsonl', 'b.jsonl'] }),
+      ])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockImplementation(async (_p: string, id: string) =>
+        makeSummary({ sessionId: id, cwd: 'C:\\Users\\dev\\OneDrive\\gone' }),
+      )
+
+      const result = await scanAllSessions()
+
+      // Auto-hiding here would have hidden 6 of 7 real rewind-dashboard sessions.
+      expect(result).toHaveLength(2)
+      expect(result.every((s) => s.pathExists === false)).toBe(true)
+      expect(result.every((s) => s.realPath === 'C:\\Users\\dev\\OneDrive\\gone')).toBe(true)
+      // One existsSync per distinct recorded path, not one per session.
+      expect(existsSync).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports pathExists true when no cwd was ever recorded (no false stale badge)', async () => {
+      const { scanAllSessions, mockScanProjects, mockParseSummary, mockStat, fs } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: 1000, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary({ cwd: null }))
+
+      const result = await scanAllSessions()
+
+      expect(result[0].realPath).toBeNull()
+      expect(result[0].pathExists).toBe(true)
+      expect(result[0].projectName).toBe('myproject') // decoded fallback kept
+      expect(fs.existsSync as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled()
+    })
+  })
+
   describe('getLiveSessionStates', () => {
     it('returns [] when the registry is unavailable', async () => {
       const { getLiveSessionStates, mockReadLiveSessions } = await importScanner()
@@ -787,27 +1070,154 @@ describe('session-scanner', () => {
       expect(getLiveSessionStates()).toEqual([])
     })
 
-    it('maps busy to working and everything else to waiting', async () => {
-      const { getLiveSessionStates, mockReadLiveSessions } = await importScanner()
+    it('maps a busy record with a fresh file to working and everything else to waiting', async () => {
+      const { getLiveSessionStates, mockReadLiveSessions, mockStatSync } = await importScanner()
       mockReadLiveSessions.mockReturnValue(
         registry({ 'session-busy': 'busy', 'session-idle': 'idle', 'session-huh': 'unknown' }),
       )
+      mockStatSync.mockReturnValue({ mtimeMs: NOW })
 
       expect(getLiveSessionStates()).toEqual([
         { sessionId: 'session-busy', sessionState: 'working' },
         { sessionId: 'session-idle', sessionState: 'waiting' },
         { sessionId: 'session-huh', sessionState: 'waiting' },
       ])
+      // Only the busy record needs an mtime: idle/unknown are 'waiting' regardless.
+      expect(mockStatSync).toHaveBeenCalledTimes(1)
+      expect(mockStatSync).toHaveBeenCalledWith(
+        path.join('/mock/claude/projects', '-Users-user-myproject', 'session-busy.jsonl'),
+      )
+    })
+
+    it('demotes a busy record whose file has not moved in 6 months (same rule as the scan)', async () => {
+      const { getLiveSessionStates, mockReadLiveSessions, mockStatSync } = await importScanner()
+      mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'busy' }))
+      mockStatSync.mockReturnValue({ mtimeMs: NOW - 180 * 24 * 60 * 60 * 1000 })
+
+      expect(getLiveSessionStates()).toEqual([
+        { sessionId: 'session-abc', sessionState: 'waiting' },
+      ])
+    })
+
+    it('demotes a busy record whose JSONL cannot be located at all', async () => {
+      const { getLiveSessionStates, mockReadLiveSessions } = await importScanner()
+      // statSync throws ENOENT (mock default): an unverifiable busy record must
+      // never be reported as working.
+      mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'busy' }))
+
+      expect(getLiveSessionStates()).toEqual([
+        { sessionId: 'session-abc', sessionState: 'waiting' },
+      ])
     })
 
     it('never triggers a session scan', async () => {
-      const { getLiveSessionStates, mockScanProjects, mockReadLiveSessions } = await importScanner()
+      const { getLiveSessionStates, mockScanProjects, mockReadLiveSessions, mockStatSync } =
+        await importScanner()
       mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'busy' }))
+      mockStatSync.mockReturnValue({ mtimeMs: NOW })
 
       getLiveSessionStates()
 
       // The old getActiveSessions() ran a full 454-file scan every 3 seconds.
       expect(mockScanProjects).not.toHaveBeenCalled()
+      // At most one stat per busy registry entry, not one per session file.
+      expect(mockStatSync).toHaveBeenCalledTimes(1)
+    })
+
+    it('reuses the path learned by the last scan when the record has no cwd', async () => {
+      const {
+        scanAllSessions,
+        getLiveSessionStates,
+        mockScanProjects,
+        mockParseSummary,
+        mockReadLiveSessions,
+        mockStat,
+        mockStatSync,
+      } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: NOW, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary())
+      mockReadLiveSessions.mockReturnValue(registry())
+      await scanAllSessions()
+
+      const noCwd: LiveSessionsResult = {
+        available: true,
+        sessions: new Map([
+          ['session-abc', { sessionId: 'session-abc', pid: 1, status: 'busy', updatedAt: NOW }],
+        ]),
+      }
+      mockReadLiveSessions.mockReturnValue(noCwd)
+      mockStatSync.mockReturnValue({ mtimeMs: NOW })
+
+      expect(getLiveSessionStates()).toEqual([
+        { sessionId: 'session-abc', sessionState: 'working' },
+      ])
+      expect(mockStatSync).toHaveBeenCalledWith(
+        path.join('/mock/claude/projects', '-Users-user-myproject', 'session-abc.jsonl'),
+      )
+    })
+  })
+
+  describe('the 3s poll must not undo the 30s scan', () => {
+    it('REGRESSION: a stale busy record the scan demoted is NOT flipped back to working', async () => {
+      const {
+        scanAllSessions,
+        getLiveSessionStates,
+        mockScanProjects,
+        mockParseSummary,
+        mockReadLiveSessions,
+        mockStat,
+        mockStatSync,
+      } = await importScanner()
+
+      // A session killed mid-turn: status:'busy' frozen on disk, pid reused so
+      // it still probes alive, JSONL untouched for six months.
+      const sixMonthsAgo = NOW - 180 * 24 * 60 * 60 * 1000
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: sixMonthsAgo, size: 1024 })
+      mockStatSync.mockReturnValue({ mtimeMs: sixMonthsAgo })
+      mockParseSummary.mockResolvedValue(makeSummary())
+      mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'busy' }))
+
+      const scanned = await scanAllSessions()
+      expect(scanned[0].sessionState).toBe('waiting')
+
+      // The poll payload the client merges over the scan results.
+      const polled = getLiveSessionStates()
+      expect(polled).toEqual([{ sessionId: 'session-abc', sessionState: 'waiting' }])
+
+      const merged = mergeLiveStates(scanned, polled, true)
+      expect(merged[0].sessionState).toBe('waiting')
+      // The bug: 'working' here restarted a multi-month RunningTimer.
+      expect(merged[0].isActive).toBe(false)
+    })
+
+    it('still lets the poll promote a genuinely busy session with a fresh file', async () => {
+      const {
+        scanAllSessions,
+        getLiveSessionStates,
+        mockScanProjects,
+        mockParseSummary,
+        mockReadLiveSessions,
+        mockStat,
+        mockStatSync,
+      } = await importScanner()
+
+      mockScanProjects.mockResolvedValue([makeProject()])
+      mockStat.mockResolvedValue({ mtimeMs: NOW, size: 1024 })
+      mockParseSummary.mockResolvedValue(makeSummary())
+      mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'idle' }))
+
+      const scanned = await scanAllSessions()
+      expect(scanned[0].sessionState).toBe('waiting')
+
+      mockReadLiveSessions.mockReturnValue(registry({ 'session-abc': 'busy' }))
+      mockStatSync.mockReturnValue({ mtimeMs: NOW })
+
+      const merged = mergeLiveStates(scanned, getLiveSessionStates(), true)
+      expect(merged[0].sessionState).toBe('working')
+      expect(merged[0].isActive).toBe(true)
     })
   })
 })

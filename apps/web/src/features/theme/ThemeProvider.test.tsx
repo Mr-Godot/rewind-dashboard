@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { ThemeProvider, useTheme } from './ThemeProvider'
 import { ThemeToggle } from './ThemeToggle'
+import { themeInitScript } from '@/routes/__root'
 
 // happy-dom does not implement matchMedia — provide a configurable mock
 function mockMatchMedia(prefersDark: boolean) {
@@ -74,7 +75,7 @@ describe('ThemeProvider and useTheme', () => {
       expect(screen.getByTestId('theme').textContent).toBe('light')
     })
 
-    it('falls back to "dark" from system preference when localStorage is empty and prefers dark', () => {
+    it('defaults to "dark" when localStorage is empty and the OS prefers dark', () => {
       mockMatchMedia(true)
 
       render(
@@ -86,7 +87,9 @@ describe('ThemeProvider and useTheme', () => {
       expect(screen.getByTestId('theme').textContent).toBe('dark')
     })
 
-    it('falls back to "light" from system preference when localStorage is empty and prefers light', () => {
+    it('defaults to "dark" when localStorage is empty and the OS prefers LIGHT', () => {
+      // The old behaviour handed a half-built light palette to every user whose
+      // OS is light. An unset preference is now dark, full stop.
       mockMatchMedia(false)
 
       render(
@@ -95,11 +98,11 @@ describe('ThemeProvider and useTheme', () => {
         </ThemeProvider>
       )
 
-      expect(screen.getByTestId('theme').textContent).toBe('light')
+      expect(screen.getByTestId('theme').textContent).toBe('dark')
     })
 
-    it('ignores invalid localStorage value and falls back to system preference', () => {
-      mockMatchMedia(true)
+    it('ignores an invalid localStorage value and defaults to dark', () => {
+      mockMatchMedia(false)
       localStorage.setItem('csd-theme', 'invalid-value')
 
       render(
@@ -109,6 +112,68 @@ describe('ThemeProvider and useTheme', () => {
       )
 
       expect(screen.getByTestId('theme').textContent).toBe('dark')
+    })
+  })
+
+  describe('dark default agrees across BOTH resolution sites', () => {
+    /** Run the real pre-paint script from routes/__root.tsx against this DOM. */
+    function runInitScript() {
+      document.documentElement.removeAttribute('data-theme')
+      new Function(themeInitScript)()
+      return document.documentElement.getAttribute('data-theme')
+    }
+
+    it('pre-paint script resolves an unset preference to dark under prefers-color-scheme: light', () => {
+      mockMatchMedia(false)
+
+      expect(runInitScript()).toBe('dark')
+    })
+
+    it('getInitialTheme resolves the SAME unset preference to dark, so nothing flips on hydration', () => {
+      mockMatchMedia(false)
+
+      const fromScript = runInitScript()
+      render(
+        <ThemeProvider>
+          <TestComponent />
+        </ThemeProvider>
+      )
+
+      expect(screen.getByTestId('theme').textContent).toBe(fromScript)
+      expect(fromScript).toBe('dark')
+    })
+
+    it('pre-paint script still honours an explicit light preference', () => {
+      mockMatchMedia(true)
+      localStorage.setItem('csd-theme', 'light')
+
+      expect(runInitScript()).toBe('light')
+    })
+
+    it('an explicit toggle persists and overrides the OS preference on the next load', async () => {
+      mockMatchMedia(true)
+
+      const { getByTestId, unmount } = render(
+        <ThemeProvider>
+          <TestComponent />
+        </ThemeProvider>
+      )
+      getByTestId('toggle').click()
+
+      await waitFor(() => {
+        expect(localStorage.getItem('csd-theme')).toBe('light')
+      })
+      unmount()
+
+      // Next load: both sources read the stored choice, not the OS and not the
+      // dark default.
+      expect(runInitScript()).toBe('light')
+      render(
+        <ThemeProvider>
+          <TestComponent />
+        </ThemeProvider>
+      )
+      expect(screen.getByTestId('theme').textContent).toBe('light')
     })
   })
 
@@ -260,8 +325,8 @@ describe('ThemeProvider and useTheme', () => {
       })
     })
 
-    it('persists theme to localStorage on initial render', async () => {
-      mockMatchMedia(true)
+    it('persists the dark default to localStorage on initial render, even under an OS light preference', async () => {
+      mockMatchMedia(false)
 
       render(
         <ThemeProvider>

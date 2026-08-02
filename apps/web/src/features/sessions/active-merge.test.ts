@@ -8,6 +8,8 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     projectDir: '-path-to-project',
     projectPath: '/path/to/project',
     projectName: 'test-project',
+    realPath: null,
+    pathExists: true,
     branch: 'main',
     cwd: '/path/to/project',
     startedAt: '2026-01-01T10:00:00Z',

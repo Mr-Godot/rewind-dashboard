@@ -54,12 +54,16 @@ function RootComponent() {
   )
 }
 
-const themeInitScript = `
+/**
+ * Blocking pre-paint theme application. An UNSET preference resolves to dark,
+ * matching getInitialTheme() in features/theme/ThemeProvider.tsx. The two must
+ * agree or the palette flips on hydration. Light mode is opt-in via the toggle.
+ */
+export const themeInitScript = `
 (() => {
   try {
     const stored = localStorage.getItem('csd-theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const theme = stored === 'light' || stored === 'dark' ? stored : (prefersDark ? 'dark' : 'light');
+    const theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
     document.documentElement.setAttribute('data-theme', theme);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#141413' : '#f5f3ec');

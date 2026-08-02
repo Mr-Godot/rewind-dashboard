@@ -45,6 +45,8 @@ export interface PaginatedSessionsResult {
   page: number
   pageSize: number
   projects: string[]
+  /** Encoded dir keys accepted by the `project` filter, for stale-filter reconciliation. */
+  projectDirs: string[]
   hiddenProjects: HiddenProjectSummary[]
   hiddenSessionCount: number
 }
@@ -96,6 +98,7 @@ export async function paginateAndFilterSessions(
   const projects = Array.from(
     new Set(allSessions.map((s) => s.projectName)),
   ).sort()
+  const projectDirs = Array.from(new Set(allSessions.map((s) => s.projectDir))).sort()
 
   // Apply filters
   let filtered = allSessions
@@ -111,6 +114,7 @@ export async function paginateAndFilterSessions(
         s.sessionId.toLowerCase().includes(q) ||
         s.cwd?.toLowerCase().includes(q) ||
         s.firstUserMessage?.toLowerCase().includes(q) ||
+        s.claudeName?.toLowerCase().includes(q) ||
         sessionMeta[s.sessionId]?.customName?.toLowerCase().includes(q),
     )
   }
@@ -122,9 +126,10 @@ export async function paginateAndFilterSessions(
     filtered = filtered.filter((s) => !s.isActive)
   }
 
-  // Project filter
+  // Project filter. The dir arm is the precise one (two projects can share a
+  // display name); the name arm keeps existing bookmarks and the dropdown working.
   if (project) {
-    filtered = filtered.filter((s) => s.projectName === project)
+    filtered = filtered.filter((s) => s.projectDir === project || s.projectName === project)
   }
 
   // Starred filter (when sort mode is 'starred')
@@ -209,6 +214,7 @@ export async function paginateAndFilterSessions(
     page: clampedPage,
     pageSize,
     projects,
+    projectDirs,
     hiddenProjects,
     hiddenSessionCount,
   }

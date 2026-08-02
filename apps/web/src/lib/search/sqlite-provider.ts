@@ -151,6 +151,7 @@ export class SqliteSearchProvider implements SearchProvider {
   private initialized = false
   private lastRefresh = 0
   private inFlightRefresh: Promise<IndexStats> | null = null
+  private inFlightForced = false
 
   private selectFilesStmt: SqliteStatement | null = null
   private deleteBlocksStmt: SqliteStatement | null = null
@@ -277,14 +278,30 @@ export class SqliteSearchProvider implements SearchProvider {
    * multi-minute stall. The throttle is measured from the END of the previous
    * pass for the same reason: measuring from the start admits a duplicate scan
    * the moment the pass runs longer than the throttle window.
+   *
+   * A forced call is NEVER satisfied by an in-flight non-forced pass: that pass
+   * skips unchanged files, so a rebuild request would silently no-op. It queues
+   * behind the running pass instead of racing it against the write lock.
    */
   async refresh(opts?: { force?: boolean }): Promise<IndexStats> {
-    if (this.inFlightRefresh) return this.inFlightRefresh
-    this.inFlightRefresh = this.runRefresh(opts)
+    const force = opts?.force ?? false
+    if (this.inFlightRefresh && (!force || this.inFlightForced)) return this.inFlightRefresh
+
+    const previous = this.inFlightRefresh
+    const pass = (async () => {
+      if (previous) await previous.catch(() => undefined)
+      return this.runRefresh(opts)
+    })()
+    this.inFlightRefresh = pass
+    this.inFlightForced = force
     try {
-      return await this.inFlightRefresh
+      return await pass
     } finally {
-      this.inFlightRefresh = null
+      // A newer pass may have taken over while this one ran; never clear theirs.
+      if (this.inFlightRefresh === pass) {
+        this.inFlightRefresh = null
+        this.inFlightForced = false
+      }
     }
   }
 

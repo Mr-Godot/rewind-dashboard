@@ -55,8 +55,11 @@ export function resetLiveSessionsCache(): void {
  * Read-only: no writes, no spawns — liveness is probed with process.kill(pid, 0).
  */
 export function readLiveSessions(isPidAlive: IsPidAlive = defaultIsPidAlive): LiveSessionsResult {
+  // Only the production probe shares the memo: an injected probe must never
+  // read, or leave behind, a result produced by a different probe.
+  const memoizable = isPidAlive === defaultIsPidAlive
   const now = Date.now()
-  if (memo && now - memo.at < MEMO_TTL_MS) return memo.result
+  if (memoizable && memo && now - memo.at < MEMO_TTL_MS) return memo.result
 
   const sessions = new Map<string, LiveSession>()
   const sessionsDir = path.join(getClaudeDir(), 'sessions')
@@ -70,7 +73,7 @@ export function readLiveSessions(isPidAlive: IsPidAlive = defaultIsPidAlive): Li
       console.warn('[live-sessions] ~/.claude/sessions unavailable, falling back to mtime heuristic')
     }
     const result: LiveSessionsResult = { available: false, sessions }
-    memo = { at: now, result }
+    if (memoizable) memo = { at: now, result }
     return result
   }
 
@@ -102,6 +105,6 @@ export function readLiveSessions(isPidAlive: IsPidAlive = defaultIsPidAlive): Li
   }
 
   const result: LiveSessionsResult = { available: true, sessions }
-  memo = { at: now, result }
+  if (memoizable) memo = { at: now, result }
   return result
 }

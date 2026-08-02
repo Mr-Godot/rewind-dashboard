@@ -27,6 +27,26 @@ export function getProjectsDir(): string {
   return path.join(claudeDir(), 'projects')
 }
 
+/**
+ * Root directory for dashboard-owned writable state (cache, metadata, settings).
+ *
+ * Mirrors the CLAUDE_HOME convention used by resolveClaudeDir(): when
+ * CLAUDE_HOME points the scanner at an alternate ~/.claude (e.g. the e2e
+ * fixtures), the dashboard's writable state moves alongside it instead of
+ * staying on the real user's home directory. Without CLAUDE_HOME the result is
+ * identical to the historical os.homedir()/.claude-dashboard.
+ *
+ * Resolved on every call (not memoised) so that changing CLAUDE_HOME/HOME at
+ * runtime, as tests do, is always reflected.
+ */
+export function getDashboardDir(): string {
+  if (process.env.CLAUDE_HOME) {
+    const resolved = path.resolve(process.env.CLAUDE_HOME)
+    return path.join(path.dirname(resolved), '.claude-dashboard')
+  }
+  return path.join(os.homedir(), '.claude-dashboard')
+}
+
 export function getStatsPath(): string {
   return path.join(claudeDir(), 'stats-cache.json')
 }

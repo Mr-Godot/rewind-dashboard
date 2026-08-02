@@ -17,6 +17,7 @@ import { CostEstimationPanel } from '@/features/cost-estimation/CostEstimationPa
 import { CostSummaryLine } from '@/features/cost-estimation/CostSummaryLine'
 import { ActiveSessionBanner } from '@/features/session-detail/ActiveSessionBanner'
 import { useIsSessionActive } from '@/features/sessions/useIsSessionActive'
+import { resolveSessionTitle } from '@/features/sessions/session-title'
 import { formatDuration, formatDateTime } from '@/lib/utils/format'
 import { sessionToJSON, downloadFile } from '@/lib/utils/export-utils'
 import { ExportDropdown } from '@/components/ExportDropdown'
@@ -53,9 +54,13 @@ function DetailPinButton({ sessionId, pinned }: { sessionId: string; pinned: boo
 function DetailRenameButton({
   sessionId,
   currentName,
+  placeholder,
 }: {
   sessionId: string
   currentName: string
+  /** Resolved title, shown as a hint only — never prefilled, or a Rewind-owned
+   * name would permanently shadow every future /rename. */
+  placeholder?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(currentName)
@@ -77,7 +82,7 @@ function DetailRenameButton({
           }}
           autoFocus
           className="rounded border border-gray-600 bg-gray-800 px-2 py-0.5 text-xs text-gray-100 outline-none focus:border-brand-500"
-          placeholder="Session name..."
+          placeholder={placeholder || 'Session name...'}
         />
         <button
           type="button"
@@ -175,8 +180,13 @@ function SessionDetailPage() {
     )
   }
 
-  const firstUserTurn = detail.turns.find((t) => t.type === 'user' && t.message)
-  const sessionTitle = sessionMeta?.customName || firstUserTurn?.message?.slice(0, 120) || detail.projectName
+  const sessionTitle = resolveSessionTitle({
+    customName: sessionMeta?.customName,
+    claudeName: detail.claudeName,
+    firstUserMessage: detail.firstUserMessage,
+    fallback: privacyMode ? anonymizeProjectName(detail.projectName) : detail.projectName,
+    privacyMode,
+  })
 
   const startedAt = detail.turns[0]?.timestamp
   const endedAt = detail.turns[detail.turns.length - 1]?.timestamp
@@ -199,9 +209,7 @@ function SessionDetailPage() {
             &larr; Sessions
           </Link>
           <h1 className="mt-1 text-xl font-bold text-gray-100" title={sessionTitle}>
-            {privacyMode
-              ? anonymizeProjectName(detail.projectName)
-              : sessionTitle}
+            {sessionTitle}
           </h1>
           <div className="mt-1 flex items-center gap-1.5">
             <span className="rounded bg-blue-900/20 border border-blue-800/40 px-1.5 py-0.5 text-xs text-blue-300">
@@ -232,7 +240,7 @@ function SessionDetailPage() {
         </div>
         <div className="flex items-center gap-2">
           <DetailPinButton sessionId={sessionId} pinned={sessionMeta?.pinned ?? false} />
-          <DetailRenameButton sessionId={sessionId} currentName={sessionMeta?.customName || ''} />
+          <DetailRenameButton sessionId={sessionId} currentName={sessionMeta?.customName || ''} placeholder={sessionTitle} />
           <LaunchButton sessionId={sessionId} cwd={detail.cwd || detail.projectPath} size="md" />
           <ExportDropdown
             options={[

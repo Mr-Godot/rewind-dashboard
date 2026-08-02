@@ -1,19 +1,17 @@
 import * as path from 'node:path'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import { createServerFn } from '@tanstack/react-start'
-import { decodeProjectDirName, getProjectsDir } from '@/lib/utils/claude-path'
+import { decodeProjectDirName, getDashboardDir, getProjectsDir } from '@/lib/utils/claude-path'
 import { MetadataSchema, DEFAULT_METADATA, type Metadata } from './metadata.types'
 
-const METADATA_DIR = '.claude-dashboard'
 const METADATA_FILE = 'session-metadata.json'
 
 function getMetadataPath(): string {
-  return path.join(os.homedir(), METADATA_DIR, METADATA_FILE)
+  return path.join(getDashboardDir(), METADATA_FILE)
 }
 
 function getMetadataDir(): string {
-  return path.join(os.homedir(), METADATA_DIR)
+  return getDashboardDir()
 }
 
 function readMetadataSync(): Metadata {

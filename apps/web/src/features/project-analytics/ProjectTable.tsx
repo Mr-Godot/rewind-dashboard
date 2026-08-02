@@ -154,7 +154,7 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
                       </button>
                       <Link
                         to="/sessions"
-                        search={{ project: project.projectName }}
+                        search={{ project: project.projectDir }}
                         className="text-sm text-brand-500 hover:underline"
                       >
                         {meta?.customName || anonymizeProjectName(project.projectName)}
@@ -178,6 +178,14 @@ export function ProjectTable({ projects, showHidden }: ProjectTableProps) {
                       {isHidden && (
                         <span className="rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400">
                           hidden
+                        </span>
+                      )}
+                      {!project.pathExists && (
+                        <span
+                          title={`recorded path no longer exists: ${project.realPath ?? ''}`}
+                          className="rounded bg-amber-900/30 px-1.5 py-0.5 text-[10px] text-amber-400"
+                        >
+                          path missing
                         </span>
                       )}
                     </div>

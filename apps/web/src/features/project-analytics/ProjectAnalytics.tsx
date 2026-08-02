@@ -5,6 +5,7 @@ import { ProjectTable } from './ProjectTable'
 import { formatDuration } from '@/lib/utils/format'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
+import { EmptyState } from '@/components/EmptyState'
 
 export function ProjectAnalytics() {
   const { anonymizeProjectName } = usePrivacy()
@@ -32,9 +33,10 @@ export function ProjectAnalytics() {
 
   if (allProjects.length === 0) {
     return (
-      <div className="py-12 text-center text-sm text-gray-500">
-        No projects found. Sessions will appear here once scanned.
-      </div>
+      <EmptyState
+        title="No projects found"
+        hint="Projects appear here once sessions have been scanned from ~/.claude."
+      />
     )
   }
 

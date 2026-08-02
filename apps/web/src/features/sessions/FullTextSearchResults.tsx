@@ -28,9 +28,15 @@ const SLOW_SEARCH_MS = 2000
 export function FullTextSearchResults({
   query,
   existingIds,
+  newestSessionAt = null,
 }: {
   query: string
   existingIds: Set<string>
+  /**
+   * Newest session activity the metadata list knows about. Anything newer than
+   * the index's own high-water mark is provably missing from these results.
+   */
+  newestSessionAt?: string | null
 }) {
   const enabled = query.length >= MIN_FTS_QUERY_LENGTH
 
@@ -77,10 +83,19 @@ export function FullTextSearchResults({
   }
 
   const rawCount = data.hits.length
+  // The index only ever grows forward, so one session newer than its
+  // high-water mark is proof the result set is incomplete. Silence here is
+  // what makes a stale index look like a definitive answer.
+  const indexedThrough = data.indexedThrough ?? null
+  const stale =
+    !!indexedThrough &&
+    !!newestSessionAt &&
+    Date.parse(newestSessionAt) > Date.parse(indexedThrough)
 
   if (rawCount === 0) {
     return (
       <Shell>
+        {stale && <StaleNotice indexedThrough={indexedThrough} />}
         <p className="text-sm text-gray-400">
           No conversation text matched &ldquo;{query}&rdquo;.
         </p>
@@ -95,6 +110,7 @@ export function FullTextSearchResults({
   // re-sorting a truncated page is exactly the bug being fixed.
   return (
     <Shell>
+      {stale && <StaleNotice indexedThrough={indexedThrough} />}
       <p className="mb-2 text-xs text-gray-500">
         Showing {rawCount} of {data.total}
       </p>
@@ -135,6 +151,19 @@ export function FullTextSearchResults({
         ))}
       </div>
     </Shell>
+  )
+}
+
+function StaleNotice({ indexedThrough }: { indexedThrough: string }) {
+  return (
+    <p
+      data-testid="fts-stale-notice"
+      className="mb-2 rounded-lg border border-amber-800/40 bg-amber-900/20 px-2 py-1.5 text-xs text-amber-300"
+    >
+      Index only covers conversations through{' '}
+      <span title={indexedThrough}>{formatDateTime(indexedThrough)}</span>. Newer sessions are not
+      searchable yet.
+    </p>
   )
 }
 

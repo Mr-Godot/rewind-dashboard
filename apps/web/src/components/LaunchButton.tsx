@@ -9,6 +9,7 @@ interface LaunchButtonProps {
 
 export function LaunchButton({ sessionId, cwd, size = 'sm', isActive }: LaunchButtonProps) {
   const [status, setStatus] = useState<'idle' | 'launched' | 'error'>('idle')
+  const [error, setError] = useState<string | null>(null)
   const padding = size === 'md' ? 'px-3 py-1' : 'px-2 py-0.5'
 
   const launch = useCallback(async () => {
@@ -18,11 +19,22 @@ export function LaunchButton({ sessionId, cwd, size = 'sm', isActive }: LaunchBu
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, cwd }),
       })
-      setStatus(res.ok ? 'launched' : 'error')
-      setTimeout(() => setStatus('idle'), 2000)
-    } catch {
+      if (res.ok) {
+        setError(null)
+        setStatus('launched')
+        setTimeout(() => setStatus('idle'), 2000)
+        return
+      }
+      // The server refused (e.g. 409: the recorded working directory is gone).
+      // Show its reason instead of a silent no-op.
+      const body = await res.json().catch(() => null)
+      setError(body?.error ?? `Launch failed (${res.status})`)
       setStatus('error')
-      setTimeout(() => setStatus('idle'), 2000)
+      setTimeout(() => setStatus('idle'), 8000)
+    } catch {
+      setError('Launch failed: the dashboard server did not respond')
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 8000)
     }
   }, [sessionId, cwd])
 
@@ -35,17 +47,24 @@ export function LaunchButton({ sessionId, cwd, size = 'sm', isActive }: LaunchBu
   }
 
   return (
-    <button
-      type="button"
-      title="Launch session in terminal"
-      onClick={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        launch()
-      }}
-      className={`shrink-0 border border-matrix/20 bg-matrix/10 ${padding} text-xs font-medium text-matrix transition-colors hover:border-matrix/30 hover:bg-matrix/15`}
-    >
-      {status === 'launched' ? 'Launched!' : status === 'error' ? 'Failed' : 'Launch'}
-    </button>
+    <>
+      <button
+        type="button"
+        title={status === 'error' && error ? error : 'Launch session in terminal'}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          launch()
+        }}
+        className={`shrink-0 border border-matrix/20 bg-matrix/10 ${padding} text-xs font-medium text-matrix transition-colors hover:border-matrix/30 hover:bg-matrix/15`}
+      >
+        {status === 'launched' ? 'Launched!' : status === 'error' ? 'Failed' : 'Launch'}
+      </button>
+      {status === 'error' && error && (
+        <span role="alert" title={error} className="max-w-64 truncate text-[10px] text-red-400">
+          {error}
+        </span>
+      )}
+    </>
   )
 }

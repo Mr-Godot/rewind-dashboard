@@ -1,22 +1,21 @@
 import * as path from 'node:path'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import { createServerFn } from '@tanstack/react-start'
+import { getDashboardDir } from '@/lib/utils/claude-path'
 import {
   SettingsSchema,
   DEFAULT_SETTINGS,
   type Settings,
 } from './settings.types'
 
-const SETTINGS_DIR = '.claude-dashboard'
 const SETTINGS_FILE = 'settings.json'
 
 function getSettingsPath(): string {
-  return path.join(os.homedir(), SETTINGS_DIR, SETTINGS_FILE)
+  return path.join(getDashboardDir(), SETTINGS_FILE)
 }
 
 function getSettingsDir(): string {
-  return path.join(os.homedir(), SETTINGS_DIR)
+  return getDashboardDir()
 }
 
 export const getSettings = createServerFn({ method: 'GET' }).handler(

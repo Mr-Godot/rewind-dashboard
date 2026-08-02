@@ -140,6 +140,39 @@ describe('SqliteSearchProvider.refresh (incremental)', () => {
     expect(first.sessionsSkipped).toBe(0)
   })
 
+  it('does NOT satisfy a forced refresh with an in-flight non-forced pass', async () => {
+    writeSession('-Users-a-proj', 'sess-a', [userText('t1', 'alpha bravo')])
+    writeSession('-Users-a-proj', 'sess-b', [userText('t1', 'delta echo')])
+
+    const provider = newProvider()
+    // The forced call is issued while the plain pass is still running. Sharing
+    // that pass makes a rebuild silently no-op, because it skips unchanged files.
+    const plain = provider.refresh()
+    const forced = provider.refresh({ force: true })
+
+    const [plainStats, forcedStats] = await Promise.all([plain, forced])
+
+    expect(forcedStats).not.toBe(plainStats)
+    expect(plainStats.sessionsIndexed).toBe(2)
+    // A real forced pass reindexes every file rather than skipping them.
+    expect(forcedStats.sessionsIndexed).toBe(2)
+    expect(forcedStats.sessionsSkipped).toBe(0)
+
+    // The queued pass still leaves a consistent, searchable index.
+    const res = await provider.search({ query: 'alpha' })
+    expect(res.hits.map((h) => h.sessionId)).toEqual(['sess-a'])
+  })
+
+  it('still coalesces a non-forced call onto an in-flight forced pass', async () => {
+    writeSession('-Users-a-proj', 'sess-a', [userText('t1', 'alpha bravo')])
+
+    const provider = newProvider()
+    const forced = provider.refresh({ force: true })
+    const plain = provider.refresh()
+
+    expect(await plain).toBe(await forced)
+  })
+
   it('throttles from the END of the previous pass, not its start', async () => {
     writeSession('-Users-a-proj', 'sess-a', [userText('t1', 'alpha bravo')])
     writeSession('-Users-a-proj', 'sess-b', [userText('t1', 'delta echo')])

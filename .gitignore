@@ -20,3 +20,4 @@ docs/designs/
 docs/plans/
 .plans/
 scripts/
+apps/web/e2e/fixtures/.claude-dashboard/

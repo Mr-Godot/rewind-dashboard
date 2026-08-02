@@ -10,6 +10,8 @@ describe('project-analytics', () => {
     projectDir: overrides.projectDir ?? overrides.projectPath ?? '/path/to/project',
     projectPath: '/path/to/project',
     projectName: 'test-project',
+    realPath: null,
+    pathExists: true,
     branch: 'main',
     cwd: '/path/to/project',
     startedAt: '2026-01-01T10:00:00Z',
@@ -218,6 +220,43 @@ describe('project-analytics', () => {
       expect(result.projects[0].projectName).toBe('ProjectA')
     })
 
+    it('takes realPath/pathExists from the MOST RECENT session, not the first', () => {
+      const sessions = [
+        createMockSession({
+          projectDir: '-dir',
+          lastActiveAt: '2026-01-01T00:00:00Z',
+          realPath: 'C:\\old\\location',
+          pathExists: false,
+        }),
+        createMockSession({
+          projectDir: '-dir',
+          lastActiveAt: '2026-06-01T00:00:00Z',
+          realPath: 'C:\\new\\location',
+          pathExists: true,
+        }),
+      ]
+
+      const result = aggregateProjectAnalytics(sessions)
+
+      expect(result.projects[0].realPath).toBe('C:\\new\\location')
+      expect(result.projects[0].pathExists).toBe(true)
+    })
+
+    it('flags a stale project but still counts every one of its sessions', () => {
+      const sessions = [
+        createMockSession({ projectDir: '-gone', realPath: 'C:\\gone', pathExists: false }),
+        createMockSession({ projectDir: '-gone', realPath: 'C:\\gone', pathExists: false }),
+      ]
+
+      const result = aggregateProjectAnalytics(sessions)
+
+      // Never auto-hidden: the badge is the only signal.
+      expect(result.projects).toHaveLength(1)
+      expect(result.projects[0].totalSessions).toBe(2)
+      expect(result.projects[0].pathExists).toBe(false)
+      expect(result.projects[0].realPath).toBe('C:\\gone')
+    })
+
     it('should handle no sessions', () => {
       const result = aggregateProjectAnalytics([])
 
@@ -244,6 +283,8 @@ describe('project-analytics', () => {
         projectDir: '/project-a',
         projectPath: '/project-a',
         projectName: 'project-a',
+        realPath: null,
+        pathExists: true,
         totalSessions: 1,
         activeSessions: 1,
         totalMessages: 10,
@@ -293,6 +334,8 @@ describe('project-analytics', () => {
         projectDir: '/project-b',
         projectPath: '/project-b',
         projectName: 'project-b',
+        realPath: null,
+        pathExists: true,
         totalSessions: 1,
         activeSessions: 1,
         totalMessages: 5,
@@ -306,6 +349,8 @@ describe('project-analytics', () => {
         projectDir: '/project-a',
         projectPath: '/project-a',
         projectName: 'project-a',
+        realPath: null,
+        pathExists: true,
         totalSessions: 2,
         activeSessions: 1,
         totalMessages: 30,

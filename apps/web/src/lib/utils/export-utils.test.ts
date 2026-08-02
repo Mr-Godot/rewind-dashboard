@@ -395,6 +395,8 @@ function createMockSessionDetail(overrides: Partial<SessionDetail> = {}): Sessio
     sessionId: 'test-session-123',
     projectPath: '/path/to/project',
     projectName: 'test-project',
+    claudeName: null,
+    firstUserMessage: null,
     branch: 'main',
     cwd: null,
     turns: [],

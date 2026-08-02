@@ -20,8 +20,10 @@ function getInitialTheme(): Theme {
     return stored
   }
 
-  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches
-  return prefersDark ? 'dark' : 'light'
+  // An unset preference resolves to dark, matching the blocking pre-paint
+  // script in routes/__root.tsx. Following the OS here handed light mode to
+  // users who never asked for it, and light mode only inverts the gray ramp.
+  return 'dark'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

@@ -11,6 +11,8 @@ describe('paginateAndFilterSessions', () => {
     projectDir: '-path-to-project',
     projectPath: '/path/to/project',
     projectName: 'test-project',
+    realPath: null,
+    pathExists: true,
     branch: 'main',
     cwd: '/path/to/project',
     startedAt: '2026-01-01T10:00:00Z',
@@ -106,6 +108,25 @@ describe('paginateAndFilterSessions', () => {
 
       expect(result.sessions).toHaveLength(1)
       expect(result.sessions[0].cwd).toBe('/Users/name/projects/web')
+    })
+
+    it('should filter by claudeName (the /rename title shown on the card)', async () => {
+      const sessions = [
+        createMockSession({ claudeName: 'kanban-board' }),
+        createMockSession({ claudeName: 'invoice-parser' }),
+        createMockSession({ claudeName: null }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, {
+        page: 1,
+        pageSize: 10,
+        search: 'KANBAN',
+        status: 'all',
+        project: '', sort: 'latest' as const, starFirst: true,
+      })
+
+      expect(result.sessions).toHaveLength(1)
+      expect(result.sessions[0].claudeName).toBe('kanban-board')
     })
 
     it('should handle null values gracefully', async () => {
@@ -228,6 +249,72 @@ describe('paginateAndFilterSessions', () => {
       expect(result.sessions).toHaveLength(1)
       expect(result.sessions[0].projectName).toBe('project-a')
       expect(result.totalCount).toBe(1)
+    })
+
+    it('filters by the encoded projectDir (what the Projects table links to)', async () => {
+      const sessions = [
+        createMockSession({
+          projectDir: 'C--Users-dev--work-rewind-dashboard',
+          projectName: '_work/rewind-dashboard',
+        }),
+        createMockSession({
+          projectDir: 'C--Users-dev--CODE-rewind-dashboard',
+          projectName: '_CODE/rewind-dashboard',
+        }),
+        createMockSession({ projectDir: '-other', projectName: 'other' }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, {
+        page: 1,
+        pageSize: 10,
+        search: '',
+        status: 'all',
+        project: 'C--Users-dev--CODE-rewind-dashboard',
+        sort: 'latest' as const,
+        starFirst: true,
+      })
+
+      // Two rows now share a base name, so only the dir key can separate them.
+      expect(result.sessions).toHaveLength(1)
+      expect(result.sessions[0].projectName).toBe('_CODE/rewind-dashboard')
+    })
+
+    it('BACKWARD COMPAT: an existing projectName bookmark still returns the union', async () => {
+      const sessions = [
+        createMockSession({ projectDir: '-dir-one', projectName: 'shared-name' }),
+        createMockSession({ projectDir: '-dir-two', projectName: 'shared-name' }),
+        createMockSession({ projectDir: '-dir-three', projectName: 'other' }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, {
+        page: 1,
+        pageSize: 10,
+        search: '',
+        status: 'all',
+        project: 'shared-name',
+        sort: 'latest' as const,
+        starFirst: true,
+      })
+
+      expect(result.sessions).toHaveLength(2)
+    })
+
+    it('exposes projectDirs so a dir-keyed filter is not reconciled away as stale', async () => {
+      const sessions = [
+        createMockSession({ projectDir: '-dir-one', projectName: 'one' }),
+        createMockSession({ projectDir: '-dir-two', projectName: 'two' }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, {
+        page: 1,
+        pageSize: 10,
+        search: '',
+        status: 'all',
+        project: '', sort: 'latest' as const, starFirst: true,
+      })
+
+      expect(result.projectDirs).toEqual(['-dir-one', '-dir-two'])
+      expect(result.projects).toEqual(['one', 'two'])
     })
 
     it('should return all sessions when project filter is empty', async () => {

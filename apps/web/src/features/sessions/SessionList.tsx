@@ -18,6 +18,8 @@ import { countWorkingSessions, hasWorkingSession, mergeLiveStates } from './acti
 import { useHideProject } from '@/features/metadata/useMetadataMutations'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { FullTextSearchResults, MIN_FTS_QUERY_LENGTH } from './FullTextSearchResults'
+import { EmptyState } from '@/components/EmptyState'
+import { useRescan } from './rescan.queries'
 import { Route } from '@/routes/_dashboard/sessions/index'
 
 export function SessionList() {
@@ -25,6 +27,7 @@ export function SessionList() {
   const { page, pageSize, search, status, project, sort, starFirst, view, showHidden } = Route.useSearch()
   const { storedPageSize, setPageSize } = usePageSizePreference()
   const { storedFilters, persistFilters } = useSessionFilterPreferences()
+  const { anonymizeProjectName } = usePrivacy()
   const hasAppliedStoredPreference = useRef(false)
   const hasRehydratedFilters = useRef(false)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -79,23 +82,38 @@ export function SessionList() {
   const activeQuery = useQuery(activeSessionsQuery)
   const activeSessions = useMemo(() => activeQuery.data ?? [], [activeQuery.data])
   const hasActive = hasWorkingSession(activeSessions)
-  const { data: paginatedData, isLoading } = useQuery(
+  const { data: paginatedData, isLoading, isFetching, isPlaceholderData } = useQuery(
     paginatedSessionListQuery({ page, pageSize, search, status, project, sort, starFirst, showHidden, hasActive }),
   )
   const { data: metadata } = useQuery(metadataQuery)
+  const rescan = useRescan()
+
+  // A filter set from the Projects table is an encoded dir, not a display name.
+  const reconciledProject = useMemo(() => {
+    if (!project || !paginatedData) return project
+    return reconcileStoredProject(project, [
+      ...paginatedData.projects,
+      ...paginatedData.projectDirs,
+    ])
+  }, [project, paginatedData])
+
+  /**
+   * The reconcile below only runs AFTER the query resolves, so a persisted
+   * filter naming a project that no longer exists paints a full "nothing
+   * matched" screen before the navigate lands. While this is true the list is
+   * mid-correction: show the busy affordance, never an empty state.
+   */
+  const projectPendingReconcile = reconciledProject !== project
 
   // Drop a stale stored project that no longer exists in the current set
   useEffect(() => {
-    if (!project || !paginatedData) return
-    const reconciled = reconcileStoredProject(project, paginatedData.projects)
-    if (reconciled !== project) {
-      navigate({
-        to: '/sessions',
-        search: (prev) => ({ ...prev, project: reconciled, page: 1 }),
-        replace: true,
-      })
-    }
-  }, [project, paginatedData, navigate])
+    if (!projectPendingReconcile) return
+    navigate({
+      to: '/sessions',
+      search: (prev) => ({ ...prev, project: reconciledProject, page: 1 }),
+      replace: true,
+    })
+  }, [projectPendingReconcile, reconciledProject, navigate])
 
   // Progressive loading: once the current page is in, background-prefetch the
   // NEXT page only (page+1) so advancing is instant. Pages beyond that stay
@@ -114,6 +132,19 @@ export function SessionList() {
     if (!paginatedData) return []
     return mergeLiveStates(paginatedData.sessions, activeSessions, activeQuery.isSuccess)
   }, [paginatedData, activeSessions, activeQuery.isSuccess])
+
+  /**
+   * Newest activity visible on this page. Used only as a lower bound on what
+   * the conversation index must cover: anything newer than `indexedThrough`
+   * provably is not searchable yet.
+   */
+  const newestSessionAt = useMemo(() => {
+    let newest: string | null = null
+    for (const s of mergedSessions) {
+      if (!newest || Date.parse(s.lastActiveAt) > Date.parse(newest)) newest = s.lastActiveAt
+    }
+    return newest
+  }, [mergedSessions])
 
   // Client-side filter hidden projects from dropdown
   const visibleProjects = useMemo(() => {
@@ -156,9 +187,30 @@ export function SessionList() {
   const hiddenSessionCount = paginatedData?.hiddenSessionCount ?? 0
   const hiddenProjects = paginatedData?.hiddenProjects ?? []
   const noActiveFilter = !search && status === 'all' && !project
+  // Additive only. Swapping in a skeleton here would defeat keepPreviousData
+  // and blank a populated list on every search keystroke.
+  const dimmed = isPlaceholderData && isFetching
+  const busy = dimmed || projectPendingReconcile
+  const activeFilterLabels = [
+    search ? `search "${search}"` : null,
+    status !== 'all' ? `status ${status}` : null,
+    project ? `project ${anonymizeProjectName(project)}` : null,
+  ].filter((label): label is string => label !== null)
 
   function toggleShowHidden() {
     navigate({ to: '/sessions', search: (prev) => ({ ...prev, showHidden: !showHidden, page: 1 }) })
+  }
+
+  function revealHiddenSessions() {
+    navigate({ to: '/sessions', search: (prev) => ({ ...prev, showHidden: true, page: 1 }) })
+  }
+
+  function clearFilters() {
+    persistFilters({ status: 'all', project: '' })
+    navigate({
+      to: '/sessions',
+      search: (prev) => ({ ...prev, search: '', status: 'all', project: '', page: 1 }),
+    })
   }
 
   return (
@@ -178,27 +230,78 @@ export function SessionList() {
         />
       )}
 
-      {/* Background refetch — no visual indicator */}
+      {/* Background refetch: a 2px indeterminate bar, never a content swap. */}
+      {busy && (
+        <div
+          data-testid="session-list-busy"
+          role="status"
+          aria-label="Updating sessions"
+          className="mt-3 h-0.5 overflow-hidden rounded-full bg-gray-800"
+        >
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-brand-500" />
+        </div>
+      )}
 
-      <div className="mt-4 space-y-2">
+      <div
+        data-testid="session-list-rows"
+        className={`mt-4 space-y-2 transition-opacity ${dimmed ? 'opacity-50' : ''}`}
+      >
         {mergedSessions.length === 0 ? (
-          totalCount === 0 && hiddenSessionCount > 0 && noActiveFilter ? (
-            <div className="py-12 text-center text-sm text-gray-500">
-              no visible sessions — {hiddenSessionCount} hidden.{' '}
-              <button
-                type="button"
-                onClick={toggleShowHidden}
-                className="text-matrix underline-offset-2 hover:underline"
-              >
-                [show hidden]
-              </button>
-            </div>
+          // Nothing to keep and an answer already in flight: the busy bar above
+          // is the honest state. Picking an empty-state branch here would read
+          // the PLACEHOLDER's totalCount against the NEW filters and cheerfully
+          // announce "No sessions found in ~/.claude" the moment a filter is
+          // cleared. keepPreviousData is untouched: this branch only runs when
+          // there are zero rows to preserve.
+          busy ? null : totalCount === 0 &&
+            hiddenSessionCount > 0 &&
+            noActiveFilter ? (
+            <EmptyState
+              title="Every session is hidden"
+              hint={`All ${hiddenSessionCount} sessions live in projects you have hidden.`}
+              action={
+                <button
+                  type="button"
+                  onClick={revealHiddenSessions}
+                  className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
+                >
+                  Show hidden sessions
+                </button>
+              }
+            />
+          ) : totalCount === 0 && noActiveFilter ? (
+            <EmptyState
+              title="No sessions found in ~/.claude"
+              hint="Nothing was found under ~/.claude/projects. If you have used Claude Code here, rescan to rebuild the cache."
+              action={
+                <button
+                  type="button"
+                  onClick={() => rescan.mutate()}
+                  disabled={rescan.isPending}
+                  className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100 disabled:opacity-50"
+                >
+                  {rescan.isPending ? 'Rescanning…' : 'Rescan'}
+                </button>
+              }
+            />
           ) : (
-            <div className="py-12 text-center text-sm text-gray-500">
-              {totalCount === 0 && noActiveFilter
-                ? 'No sessions found in ~/.claude'
-                : 'No sessions match your filters'}
-            </div>
+            <EmptyState
+              title="No sessions match your filters"
+              hint={
+                activeFilterLabels.length > 0
+                  ? `Active filters: ${activeFilterLabels.join(', ')}.`
+                  : `Page ${page} is empty (${totalCount} sessions in total).`
+              }
+              action={
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 transition-colors hover:border-gray-600 hover:text-gray-100"
+                >
+                  Clear filters
+                </button>
+              }
+            />
           )
         ) : view === 'grouped' ? (
           <SessionListGrouped sessions={mergedSessions} metadata={metadata} />
@@ -216,7 +319,11 @@ export function SessionList() {
 
       {/* Full-text conversation search */}
       {search && search.length >= MIN_FTS_QUERY_LENGTH && (
-        <FullTextSearchResults query={search} existingIds={new Set(mergedSessions.map((s) => s.sessionId))} />
+        <FullTextSearchResults
+          query={search}
+          existingIds={new Set(mergedSessions.map((s) => s.sessionId))}
+          newestSessionAt={newestSessionAt}
+        />
       )}
 
       <div className="mt-4">

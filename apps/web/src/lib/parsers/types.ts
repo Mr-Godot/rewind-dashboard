@@ -6,8 +6,13 @@ export interface SessionSummary {
   sessionId: string
   /** Encoded on-disk project dir name (1:1, stable). Authoritative key for metadata. */
   projectDir: string
+  /** Lossy decode of projectDir. Kept as the session-file lookup key ONLY. */
   projectPath: string
   projectName: string
+  /** Exact cwd recorded in the JSONL for this project dir. Null when none was recorded. */
+  realPath: string | null
+  /** False only when realPath is known AND no longer exists on disk. */
+  pathExists: boolean
   branch: string | null
   cwd: string | null
   startedAt: string
@@ -120,6 +125,10 @@ export interface SessionDetail {
   sessionId: string
   projectPath: string
   projectName: string
+  /** /rename title from the durable JSONL custom-title record. */
+  claudeName: string | null
+  /** First non-injected user prompt, truncated — same rule the list uses. */
+  firstUserMessage: string | null
   branch: string | null
   cwd: string | null
   turns: Turn[]
@@ -224,7 +233,7 @@ export interface RawJsonlMessage {
   message?: {
     model?: string
     role?: string
-    content?: Array<{
+    content?: string | Array<{
       type: string
       text?: string
       thinking?: string

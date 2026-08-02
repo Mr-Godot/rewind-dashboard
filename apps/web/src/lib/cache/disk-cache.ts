@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import type { ZodSchema } from 'zod'
+import { getDashboardDir } from '../utils/claude-path'
 
 interface DiskCacheEntry<T> {
   version: 1
@@ -14,7 +14,7 @@ interface DiskCacheEntry<T> {
 const CACHE_VERSION = 1
 
 export function getCacheDir(): string {
-  return path.join(os.homedir(), '.claude-dashboard', 'cache')
+  return path.join(getDashboardDir(), 'cache')
 }
 
 function getCachePath(cacheKey: string): string {

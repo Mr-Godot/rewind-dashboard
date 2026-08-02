@@ -65,6 +65,25 @@ test.describe('Sessions List', () => {
     }
   })
 
+  test('Given a search that matches nothing, When I visit /sessions, Then I see the empty-state card and Clear filters restores the list', async ({
+    page,
+  }) => {
+    await page.goto('/sessions?search=zzzzznomatch')
+
+    const empty = page.getByTestId('empty-state')
+    await expect(empty).toBeVisible({ timeout: 15_000 })
+    await expect(empty).toContainText('No sessions match your filters')
+    await expect(empty).toContainText('zzzzznomatch')
+    await expect(page.locator('a[href*="/sessions/session-"]')).toHaveCount(0)
+
+    await page.getByRole('button', { name: /clear filters/i }).click()
+
+    await expect(page.locator('a[href*="/sessions/session-"]').first()).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(page.getByTestId('empty-state')).toHaveCount(0)
+  })
+
   test('Given I am on /sessions, When I view a session card, Then it shows model and message info', async ({
     page,
   }) => {

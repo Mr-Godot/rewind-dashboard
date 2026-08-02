@@ -81,6 +81,8 @@ function makeSession(
     projectDir: '-proj',
     projectPath: '/proj',
     projectName: 'proj',
+    realPath: null,
+    pathExists: true,
     branch: null,
     cwd: '/proj',
     startedAt: '2026-07-01T09:00:00.000Z',
@@ -112,6 +114,8 @@ function makeDetail(
     sessionId,
     projectPath: '/proj',
     projectName: 'proj',
+    claudeName: null,
+    firstUserMessage: null,
     branch: null,
     cwd: null,
     turns: Array.from({ length: turnCount }, (_, i) => ({

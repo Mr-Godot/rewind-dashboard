@@ -1,8 +1,18 @@
 import * as path from 'node:path'
 import * as fs from 'node:fs'
 import { createServerFn } from '@tanstack/react-start'
-import { getProjectsDir, decodeProjectDirName, extractProjectName } from '@/lib/utils/claude-path'
+import { getProjectsDir, decodeProjectDirName } from '@/lib/utils/claude-path'
+import { deriveProjectName } from '@/lib/utils/project-identity'
 import { parseDetail } from '@/lib/parsers/session-parser'
+
+/**
+ * Same rule the list uses: the recorded cwd wins, the lossy decoded path is only
+ * a fallback. extractProjectName is deliberately NOT used — its noise-word
+ * stripper turns a real `code-review` into `review`.
+ */
+export function resolveDetailProjectName(cwd: string | null, projectPath: string): string {
+  return deriveProjectName(cwd || projectPath)
+}
 
 export const getSessionDetail = createServerFn({ method: 'GET' })
   .inputValidator((input: { sessionId: string; projectPath: string }) => input)
@@ -14,16 +24,22 @@ export const getSessionDetail = createServerFn({ method: 'GET' })
       return { notFound: true as const, sessionId: data.sessionId }
     }
 
-    const projectName = extractProjectName(data.projectPath)
     try {
-      return await parseDetail(filePath.path, data.sessionId, data.projectPath, projectName)
+      const detail = await parseDetail(
+        filePath.path,
+        data.sessionId,
+        data.projectPath,
+        resolveDetailProjectName(null, data.projectPath),
+      )
+      return { ...detail, projectName: resolveDetailProjectName(detail.cwd, data.projectPath) }
     } catch {
       // File vanished mid-parse or is corrupt/truncated.
       return { notFound: true as const, sessionId: data.sessionId }
     }
   })
 
-function findSessionFile(
+/** Exported for testing: the primary (decoded-path) match must stay reachable. */
+export function findSessionFile(
   sessionId: string,
   projectPath: string,
 ): { path: string; dirName: string } | null {

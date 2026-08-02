@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
-import { scanAllSessions, getActiveSessions } from '@/lib/scanner/session-scanner'
-import type { SessionSummary } from '@/lib/parsers/types'
+import { scanAllSessions, getLiveSessionStates } from '@/lib/scanner/session-scanner'
+import type { LiveSessionState, SessionSummary } from '@/lib/parsers/types'
 import { readMetadataMigrated } from '@/features/metadata/metadata.api'
 import type { Metadata } from '@/features/metadata/metadata.types'
 
@@ -11,9 +11,9 @@ export const getSessionList = createServerFn({ method: 'GET' }).handler(
   },
 )
 
-export const getActiveSessionList = createServerFn({ method: 'GET' }).handler(
-  async () => {
-    return getActiveSessions()
+export const getLiveSessionList = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<LiveSessionState[]> => {
+    return getLiveSessionStates()
   },
 )
 

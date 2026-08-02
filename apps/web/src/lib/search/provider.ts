@@ -50,6 +50,12 @@ export interface SearchResult {
   provider: string
   /** True when the provider ran in a degraded/unavailable mode. */
   degraded?: boolean
+  /**
+   * ISO timestamp of the newest source file the index has covered, or null when
+   * unknown/not applicable. Lets the UI say the index is stale instead of
+   * presenting an out-of-date result set as complete.
+   */
+  indexedThrough?: string | null
 }
 
 export interface IndexStats {
@@ -65,6 +71,8 @@ export interface SearchProvider {
   isAvailable(): boolean | Promise<boolean>
   refresh(opts?: { force?: boolean }): Promise<IndexStats>
   search(query: SearchQuery): Promise<SearchResult>
+  /** Newest source mtime covered by the index, when the provider keeps one. */
+  indexedThrough?(): string | null
   close?(): void
 }
 

@@ -1,63 +1,46 @@
 import { createServerFn } from '@tanstack/react-start'
-import type { IndexStats } from '@/lib/search/provider'
+import { z } from 'zod'
+import type { IndexStats, SearchResult } from '@/lib/search/provider'
+import type { SearchIndexStatus } from '@/lib/search/search-service'
 
-export type { SearchHit } from '@/lib/search/provider'
+export type { SearchHit, SearchResult } from '@/lib/search/provider'
+export type { SearchIndexStatus } from '@/lib/search/search-service'
+
+/**
+ * Server boundary: validate rather than trust. The surface stays deliberately
+ * narrow (offset/projectPath/blockTypes/groupBySession are not exposed).
+ */
+const searchInputSchema = z.object({
+  query: z.string(),
+  limit: z.number().int().min(1).max(200).optional(),
+})
 
 /**
  * Full-text search across all session JSONL files.
  *
- * Delegates to the configured SearchProvider (SQLite FTS5 by default, with a
- * naive substring fallback). The provider is refreshed (incrementally, throttled)
- * before each search. The returned shape is unchanged from the original API so
- * the UI needs no changes; provider hits already satisfy SearchHit (extra
- * optional fields are simply ignored by the UI).
+ * Returns the FULL SearchResult, never a bare array: a swallowed failure that
+ * renders as `[]` is indistinguishable from "no matches". Failures come back
+ * with `degraded: true` and are logged server-side by the service.
  */
 export const searchConversations = createServerFn({ method: 'GET' })
-  .inputValidator((input: { query: string; limit?: number }) => input)
-  .handler(async ({ data }) => {
-    const query = data.query?.trim() ?? ''
-    if (query.length < 2) return []
-    const limit = data.limit ?? 20
-
-    try {
-      const { getSearchProvider } = await import('@/lib/search')
-      const provider = getSearchProvider()
-      await provider.refresh()
-      const result = await provider.search({ query, limit })
-      return result.hits
-    } catch {
-      return []
-    }
+  .inputValidator((input: unknown) => searchInputSchema.parse(input))
+  .handler(async ({ data }): Promise<SearchResult> => {
+    const { runConversationSearch } = await import('@/lib/search/search-service')
+    return runConversationSearch(data)
   })
 
 /** Force a full rebuild of the search index (for a future rebuild button). */
 export const refreshSearchIndex = createServerFn({ method: 'POST' }).handler(
-  async (): Promise<IndexStats> => {
-    try {
-      const { getSearchProvider } = await import('@/lib/search')
-      const provider = getSearchProvider()
-      return await provider.refresh({ force: true })
-    } catch {
-      return {
-        sessionsIndexed: 0,
-        sessionsSkipped: 0,
-        sessionsRemoved: 0,
-        blocksIndexed: 0,
-        durationMs: 0,
-      }
-    }
+  async (): Promise<IndexStats & { degraded?: boolean }> => {
+    const { rebuildSearchIndex } = await import('@/lib/search/search-service')
+    return rebuildSearchIndex()
   },
 )
 
-/** Report which provider is active and whether it is available. */
+/** Report which provider is active, whether it works, and how stale it is. */
 export const getSearchIndexStatus = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<{ provider: string; available: boolean }> => {
-    try {
-      const { getSearchProvider } = await import('@/lib/search')
-      const provider = getSearchProvider()
-      return { provider: provider.name, available: await provider.isAvailable() }
-    } catch {
-      return { provider: 'none', available: false }
-    }
+  async (): Promise<SearchIndexStatus> => {
+    const { readSearchIndexStatus } = await import('@/lib/search/search-service')
+    return readSearchIndexStatus()
   },
 )

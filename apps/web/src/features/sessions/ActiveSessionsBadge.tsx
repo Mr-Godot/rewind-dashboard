@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { activeSessionsQuery } from './sessions.queries'
+import { countWorkingSessions } from './active-merge'
 
 export function ActiveSessionsBadge() {
   const { data: activeSessions } = useQuery(activeSessionsQuery)
-  const count = activeSessions?.length ?? 0
+  const count = countWorkingSessions(activeSessions ?? [])
 
   if (count === 0) return null
 

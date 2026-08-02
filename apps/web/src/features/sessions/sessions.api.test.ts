@@ -688,4 +688,82 @@ describe('paginateAndFilterSessions', () => {
       expect(result.hiddenSessionCount).toBe(0)
     })
   })
+
+  describe('a waiting session is live but NOT active', () => {
+    // isActive is load-bearing in four places. A waiting (live but idle)
+    // session carries isActive:false, so none of them must fire for it.
+    const waiting = { sessionState: 'waiting' as const, isActive: false }
+
+    it('does not bypass the hidden-project filter', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'visible', projectDir: '-dir-visible', projectName: 'visible' }),
+        createMockSession({ sessionId: 'hidden-waiting', projectDir: '-dir-hidden', projectName: 'hidden', ...waiting }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: {},
+        projects: { '-dir-hidden': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { page: 1, pageSize: 10, search: '', status: 'all', project: '', sort: 'latest' as const, starFirst: true },
+        metadata,
+      )
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['visible'])
+    })
+
+    it('is still bypassed by a genuinely working session (semantics preserved)', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'hidden-working', projectDir: '-dir-hidden', projectName: 'hidden', isActive: true, sessionState: 'working' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: {},
+        projects: { '-dir-hidden': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { page: 1, pageSize: 10, search: '', status: 'all', project: '', sort: 'latest' as const, starFirst: true },
+        metadata,
+      )
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['hidden-working'])
+    })
+
+    it('is not pinned to the top of the latest sort', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'newest', lastActiveAt: '2026-01-05T10:00:00Z' }),
+        createMockSession({ sessionId: 'old-waiting', lastActiveAt: '2025-06-01T10:00:00Z', ...waiting }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, {
+        page: 1,
+        pageSize: 10,
+        search: '',
+        status: 'all',
+        project: '',
+        sort: 'latest' as const,
+        starFirst: true,
+      })
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['newest', 'old-waiting'])
+    })
+
+    it('is excluded by the "active" status filter and kept by "completed"', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'working', isActive: true, sessionState: 'working' }),
+        createMockSession({ sessionId: 'waiting', ...waiting }),
+      ]
+      const base = { page: 1, pageSize: 10, search: '', project: '', sort: 'latest' as const, starFirst: true }
+
+      const active = await paginateAndFilterSessions(sessions, { ...base, status: 'active' })
+      const completed = await paginateAndFilterSessions(sessions, { ...base, status: 'completed' })
+
+      expect(active.sessions.map((s) => s.sessionId)).toEqual(['working'])
+      expect(completed.sessions.map((s) => s.sessionId)).toEqual(['waiting'])
+    })
+  })
 })

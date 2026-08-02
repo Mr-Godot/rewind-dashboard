@@ -1,27 +1,41 @@
-import * as fs from 'node:fs'
-import * as path from 'node:path'
-import { getProjectsDir } from '../utils/claude-path'
+import type { LiveSessionsResult } from './live-sessions'
 
-// A session is "active" only when its JSONL file was written very recently.
+// Legacy fallback window, used ONLY when ~/.claude/sessions is unreadable.
 // NOTE (#29): <projectsDir>/<projectDir>/<sessionId> is the persistent
 // subagents/tool-results directory — created the first time a session uses
-// subagents and kept forever. It is NOT a liveness signal, so it must not gate
-// activity. We use a single, consistent mtime threshold instead.
-const MTIME_THRESHOLD_MS = 120_000  // 2 minutes — tight window, avoids stale ghosts
+// subagents and kept forever. It is NOT a liveness signal and is never stat'd.
+const LEGACY_MTIME_THRESHOLD_MS = 120_000
+
+// A record left at status:'busy' by a terminal that was closed mid-turn never
+// changes on disk. statusUpdatedAt was measured 16 minutes stale on a genuinely
+// busy pid, so the demotion window has to be generous.
+const BUSY_MTIME_WINDOW_MS = 30 * 60_000
+
+export type SessionLiveState = 'working' | 'waiting' | 'inactive'
 
 /**
- * Check if a session is active by examining the JSONL file's mtime against a
- * single inactivity threshold. Recent write (< 2 min) = active.
+ * Resolve a session's liveness from Claude Code's process registry.
+ *
+ * Pure: the JSONL mtime is PASSED IN (the scanner already stat'd the file) and
+ * can only DEMOTE a busy record, never promote a session the registry does not
+ * know about. A fresh mtime alone is not liveness — `claude --resume` on a
+ * months-old session touches the file without making it active.
  */
-export async function isSessionActive(
-  projectDirName: string,
+export function getSessionLiveState(
   sessionId: string,
-): Promise<boolean> {
-  const projectsDir = getProjectsDir()
-  const jsonlPath = path.join(projectsDir, projectDirName, `${sessionId}.jsonl`)
+  live: LiveSessionsResult,
+  jsonlMtimeMs: number,
+): SessionLiveState {
+  if (!live.available) {
+    return Date.now() - jsonlMtimeMs <= LEGACY_MTIME_THRESHOLD_MS ? 'working' : 'inactive'
+  }
 
-  const stat = await fs.promises.stat(jsonlPath).catch(() => null)
-  if (!stat) return false
+  const record = live.sessions.get(sessionId)
+  if (!record) return 'inactive'
 
-  return Date.now() - stat.mtimeMs <= MTIME_THRESHOLD_MS
+  if (record.status === 'busy' && Date.now() - jsonlMtimeMs <= BUSY_MTIME_WINDOW_MS) {
+    return 'working'
+  }
+
+  return 'waiting'
 }

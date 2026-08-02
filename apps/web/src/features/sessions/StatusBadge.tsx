@@ -27,8 +27,8 @@ function BlinkingCursor() {
   return <span className={`font-mono text-matrix/40 ${visible ? 'opacity-100' : 'opacity-0'}`}>{'\u2588'}</span>
 }
 
-export function StatusBadge({ isActive, sessionState }: { isActive: boolean; sessionState?: SessionState }) {
-  const state = sessionState ?? (isActive ? 'working' : 'inactive')
+export function StatusBadge({ sessionState }: { sessionState?: SessionState }) {
+  const state = sessionState ?? 'inactive'
 
   if (state === 'working') {
     return (

@@ -14,11 +14,10 @@ import {
   reconcileStoredProject,
 } from './useSessionFilterPreferences'
 import { SessionListGrouped } from './SessionListGrouped'
+import { countWorkingSessions, hasWorkingSession, mergeLiveStates } from './active-merge'
 import { useHideProject } from '@/features/metadata/useMetadataMutations'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
-import { searchConversations, type SearchHit } from './search.api'
-import { formatRelativeTime, formatDateTime } from '@/lib/utils/format'
-import { Link } from '@tanstack/react-router'
+import { FullTextSearchResults, MIN_FTS_QUERY_LENGTH } from './FullTextSearchResults'
 import { Route } from '@/routes/_dashboard/sessions/index'
 
 export function SessionList() {
@@ -77,8 +76,9 @@ export function SessionList() {
     persistFilters({ status, sort, starFirst, view, project })
   }, [status, sort, starFirst, view, project, persistFilters])
 
-  const { data: activeSessions = [] } = useQuery(activeSessionsQuery)
-  const hasActive = activeSessions.length > 0
+  const activeQuery = useQuery(activeSessionsQuery)
+  const activeSessions = useMemo(() => activeQuery.data ?? [], [activeQuery.data])
+  const hasActive = hasWorkingSession(activeSessions)
   const { data: paginatedData, isLoading } = useQuery(
     paginatedSessionListQuery({ page, pageSize, search, status, project, sort, starFirst, showHidden, hasActive }),
   )
@@ -109,16 +109,11 @@ export function SessionList() {
     )
   }, [queryClient, page, pageSize, search, status, project, sort, starFirst, showHidden, hasActive, paginatedData?.totalPages])
 
-  // Merge active status from fast-polling query
+  // Merge liveness from the fast-polling query (symmetric: also downgrades)
   const mergedSessions = useMemo(() => {
     if (!paginatedData) return []
-    const activeMap = new Map(activeSessions.map((s) => [s.sessionId, s]))
-    return paginatedData.sessions.map((s) => {
-      const active = activeMap.get(s.sessionId)
-      if (!active) return s
-      return { ...s, isActive: true, sessionState: active.sessionState }
-    })
-  }, [paginatedData, activeSessions])
+    return mergeLiveStates(paginatedData.sessions, activeSessions, activeQuery.isSuccess)
+  }, [paginatedData, activeSessions, activeQuery.isSuccess])
 
   // Client-side filter hidden projects from dropdown
   const visibleProjects = useMemo(() => {
@@ -157,7 +152,7 @@ export function SessionList() {
 
   const totalCount = paginatedData?.totalCount ?? 0
   const totalPages = paginatedData?.totalPages ?? 1
-  const activeCount = activeSessions.length
+  const activeCount = countWorkingSessions(activeSessions)
   const hiddenSessionCount = paginatedData?.hiddenSessionCount ?? 0
   const hiddenProjects = paginatedData?.hiddenProjects ?? []
   const noActiveFilter = !search && status === 'all' && !project
@@ -220,7 +215,7 @@ export function SessionList() {
       </div>
 
       {/* Full-text conversation search */}
-      {search && search.length >= 3 && (
+      {search && search.length >= MIN_FTS_QUERY_LENGTH && (
         <FullTextSearchResults query={search} existingIds={new Set(mergedSessions.map((s) => s.sessionId))} />
       )}
 
@@ -293,68 +288,6 @@ function HiddenBanner({
                 unhide
               </button>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function FullTextSearchResults({ query, existingIds }: { query: string; existingIds: Set<string> }) {
-  const [results, setResults] = useState<SearchHit[]>([])
-  const [loading, setLoading] = useState(false)
-  const searchedRef = useRef('')
-
-  useEffect(() => {
-    if (query.length < 3 || query === searchedRef.current) return
-    let cancelled = false
-    Promise.resolve().then(() => {
-      if (cancelled) return
-      setLoading(true)
-      return searchConversations({ data: { query, limit: 10 } })
-        .then((hits) => {
-          if (cancelled) return
-          setResults(hits.filter((h) => !existingIds.has(h.sessionId)))
-          searchedRef.current = query
-        })
-        .catch(() => { if (!cancelled) setResults([]) })
-        .finally(() => { if (!cancelled) setLoading(false) })
-    })
-    return () => { cancelled = true }
-  }, [query, existingIds])
-
-  if (!loading && results.length === 0) return null
-
-  return (
-    <div className="mt-6">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        Conversation matches
-      </h3>
-      {loading ? (
-        <div className="h-12 animate-pulse rounded-lg bg-gray-800/50" />
-      ) : (
-        <div className="space-y-2">
-          {results.map((hit) => (
-            <Link
-              key={hit.sessionId}
-              to="/sessions/$sessionId"
-              params={{ sessionId: hit.sessionId }}
-              search={{ project: hit.projectPath }}
-              className="block rounded-lg border border-gray-800 bg-gray-900/50 p-3 transition-all hover:border-gray-700 hover:bg-gray-900"
-            >
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-blue-900/20 border border-blue-800/40 px-1.5 py-0.5 text-blue-300">
-                    Project: {hit.projectName}
-                  </span>
-                  <span className="font-mono text-gray-500">{hit.sessionId.slice(0, 8)}</span>
-                </div>
-                {hit.timestamp && (
-                  <span className="text-gray-500" title={formatDateTime(hit.timestamp)}>{formatRelativeTime(hit.timestamp)}</span>
-                )}
-              </div>
-              <p className="mt-1 text-sm text-gray-300">&ldquo;{hit.snippet}&rdquo;</p>
-            </Link>
           ))}
         </div>
       )}

@@ -13,6 +13,30 @@ export type {
 } from './provider'
 
 let cached: SearchProvider | null = null
+let announced = false
+
+/**
+ * Announce the selected provider once per process. A silent degrade to the
+ * naive provider (one hit per file, text blocks only, no-op refresh) is
+ * otherwise undiagnosable from the outside.
+ */
+function announce(provider: SearchProvider, reason?: string): SearchProvider {
+  if (!announced) {
+    announced = true
+    if (reason) console.warn('[search] falling back to the naive provider:', reason)
+    console.info('[search] provider =', provider.name)
+  }
+  return provider
+}
+
+function selectSqlite(): SearchProvider {
+  const sqlite = new SqliteSearchProvider()
+  if (sqlite.isAvailable()) return announce(sqlite)
+  return announce(
+    new NaiveSearchProvider(),
+    'the better-sqlite3 driver could not be loaded. Recall is reduced to text blocks only, at most one hit per file',
+  )
+}
 
 /**
  * Memoized provider factory.
@@ -30,21 +54,15 @@ export function getSearchProvider(): SearchProvider {
   const choice = process.env.REWIND_SEARCH_PROVIDER?.toLowerCase()
 
   if (choice === 'naive') {
-    cached = new NaiveSearchProvider()
+    cached = announce(new NaiveSearchProvider())
     return cached
   }
   if (choice === 'qmd') {
-    cached = new QmdSearchProvider()
-    return cached
-  }
-  if (choice === 'sqlite') {
-    const sqlite = new SqliteSearchProvider()
-    cached = sqlite.isAvailable() ? sqlite : new NaiveSearchProvider()
+    cached = announce(new QmdSearchProvider())
     return cached
   }
 
-  const sqlite = new SqliteSearchProvider()
-  cached = sqlite.isAvailable() ? sqlite : new NaiveSearchProvider()
+  cached = selectSqlite()
   return cached
 }
 
@@ -52,4 +70,5 @@ export function getSearchProvider(): SearchProvider {
 export function resetSearchProvider(): void {
   if (cached?.close) cached.close()
   cached = null
+  announced = false
 }

@@ -1,8 +1,11 @@
 import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { z } from 'zod'
 import { getStatsPath } from '../utils/claude-path'
-import { readDiskCache, writeDiskCache } from '../cache/disk-cache'
+import { readDiskCache, writeDiskCache, getCacheDir } from '../cache/disk-cache'
 import { StatsCacheSchema, type StatsCache } from './types'
-import type { SessionDetail, SessionSummary } from './types'
+import type { SessionDetail, SessionSummary, TokenUsage } from './types'
+import { discoverSubagentFiles } from './subagent-discovery'
 import { scanAllSessionsWithPaths, type SessionSummaryWithPath } from '@/lib/scanner/session-scanner'
 import { parseDetail } from '@/lib/parsers/session-parser'
 
@@ -10,7 +13,7 @@ let cachedStats: { mtimeMs: number; data: StatsCache } | null = null
 
 /** Cache for the merged (stats + recent sessions) result to avoid re-scanning on every request */
 let mergedCache: { mtimeMs: number; mergedAt: number; data: StatsCache } | null = null
-const MERGE_STALENESS_MS = 60_000 // re-scan at most every 60 seconds
+const MERGE_STALENESS_MS = 300_000 // re-scan at most every 5 minutes
 
 function getTodayDateString(): string {
   return new Date().toISOString().split('T')[0]
@@ -99,37 +102,181 @@ async function maybeEnrichWithRecentSessions(
 }
 
 /**
- * Parse full session details in batches to limit concurrent file reads.
- * Returns a map of sessionId -> SessionDetail for sessions that parsed successfully.
+ * The only three aggregates the stats merge needs out of a full SessionDetail.
+ * Reducing immediately and dropping the SessionDetail keeps peak RSS flat — the
+ * old Map<string, SessionDetail> held ~1 GB of parsed transcripts in memory.
  */
-async function parseDetailsInBatches(
+export interface Contribution {
+  messageCount: number
+  toolCallCount: number
+  tokensByModel: Record<string, TokenUsage>
+}
+
+/** Bump to invalidate every persisted contribution after a computation change. */
+const STATS_CONTRIBUTIONS_VERSION = 1
+
+const TokenUsageSchema = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheCreationInputTokens: z.number(),
+})
+
+const ContributionEntrySchema = z.object({
+  key: z.string(),
+  contribution: z.object({
+    messageCount: z.number(),
+    toolCallCount: z.number(),
+    tokensByModel: z.record(z.string(), TokenUsageSchema),
+  }),
+})
+
+const ContributionsFileSchema = z.object({
+  version: z.number(),
+  entries: z.record(z.string(), ContributionEntrySchema),
+})
+
+type ContributionEntry = z.infer<typeof ContributionEntrySchema>
+
+const contributionCache = new Map<string, ContributionEntry>()
+let contributionCacheHydrated = false
+
+function contributionsCachePath(): string {
+  return path.join(getCacheDir(), 'stats-contributions.json')
+}
+
+function hydrateContributionCache(): void {
+  if (contributionCacheHydrated) return
+  contributionCacheHydrated = true
+  try {
+    const raw = fs.readFileSync(contributionsCachePath(), 'utf-8')
+    const parsed = ContributionsFileSchema.safeParse(JSON.parse(raw))
+    if (!parsed.success || parsed.data.version !== STATS_CONTRIBUTIONS_VERSION) return
+    for (const [sessionId, entry] of Object.entries(parsed.data.entries)) {
+      contributionCache.set(sessionId, entry)
+    }
+  } catch {
+    // Missing, truncated or unreadable — start cold. Never fatal.
+  }
+}
+
+function persistContributionCache(): void {
+  try {
+    fs.mkdirSync(getCacheDir(), { recursive: true })
+    const entries: Record<string, ContributionEntry> = {}
+    for (const [sessionId, entry] of contributionCache) entries[sessionId] = entry
+    const cachePath = contributionsCachePath()
+    const tmpPath = `${cachePath}.tmp`
+    fs.writeFileSync(
+      tmpPath,
+      JSON.stringify({ version: STATS_CONTRIBUTIONS_VERSION, entries }),
+      'utf-8',
+    )
+    fs.renameSync(tmpPath, cachePath)
+  } catch {
+    // Cache write failure must never break stats.
+  }
+}
+
+/**
+ * Fingerprint of the session's subagent transcripts: file count, newest mtime and
+ * which directory variants contributed. parseDetail reads these files, and real
+ * sessions have subagent files NEWER than the parent JSONL, so keying on the
+ * parent mtime alone would freeze wrong token totals forever.
+ */
+async function subagentFingerprint(filePath: string): Promise<string> {
+  const sessionDir = filePath.replace(/\.jsonl$/, '')
+  const files = await discoverSubagentFiles(sessionDir)
+  let count = 0
+  let newest = 0
+  const variants = new Set<string>()
+  for (const agentPath of files.values()) {
+    const stat = await fs.promises.stat(agentPath).catch(() => null)
+    if (!stat) continue
+    count += 1
+    if (stat.mtimeMs > newest) newest = stat.mtimeMs
+    variants.add(path.basename(path.dirname(agentPath)))
+  }
+  return `${count}:${newest}:${Array.from(variants).sort().join('+')}`
+}
+
+/** Cache key: relative to the session only, so it survives moving the repo on disk. */
+async function contributionKey(session: SessionSummaryWithPath): Promise<string> {
+  const fingerprint = await subagentFingerprint(session.filePath)
+  return `${session.mtimeMs}:${session.fileSizeBytes}:${fingerprint}`
+}
+
+function reduceDetail(detail: SessionDetail): Contribution {
+  const tokensByModel: Record<string, TokenUsage> = {}
+  for (const [model, usage] of Object.entries(detail.tokensByModel)) {
+    tokensByModel[model] = { ...usage }
+  }
+  return {
+    messageCount: detail.turns.length,
+    toolCallCount: Object.values(detail.toolFrequency).reduce((sum, n) => sum + n, 0),
+    tokensByModel,
+  }
+}
+
+/**
+ * Resolve the stats contribution of each session, reusing the persisted cache for
+ * every session whose JSONL and subagent transcripts are unchanged.
+ *
+ * `knownSessionIds` is the full set of sessions currently on disk (which may be
+ * wider than `sessions`, since the merge only looks at the post-cutoff window);
+ * anything outside it is pruned so the cache file cannot grow without bound.
+ */
+async function collectContributions(
   sessions: SessionSummaryWithPath[],
+  knownSessionIds: Set<string>,
   batchSize: number = 10,
-): Promise<Map<string, SessionDetail>> {
-  const results = new Map<string, SessionDetail>()
+): Promise<Map<string, Contribution>> {
+  hydrateContributionCache()
+  const results = new Map<string, Contribution>()
+  let dirty = false
 
   for (let i = 0; i < sessions.length; i += batchSize) {
     const batch = sessions.slice(i, i + batchSize)
-    const details = await Promise.all(
+    const outcomes = await Promise.all(
       batch.map(async (s) => {
+        const key = await contributionKey(s)
+        const cached = contributionCache.get(s.sessionId)
+        if (cached && cached.key === key) {
+          return { sessionId: s.sessionId, key, contribution: cached.contribution, changed: false }
+        }
         try {
-          return {
-            sessionId: s.sessionId,
-            detail: await parseDetail(
-              s.filePath, s.sessionId, s.projectPath, s.projectName,
-            ),
-          }
+          const detail = await parseDetail(
+            s.filePath, s.sessionId, s.projectPath, s.projectName,
+          )
+          // Reduce immediately; the SessionDetail is unreachable after this line.
+          return { sessionId: s.sessionId, key, contribution: reduceDetail(detail), changed: true }
         } catch {
-          return null // Skip sessions that fail to parse
+          return null // Skip sessions that fail to parse — never cache a zero
         }
       }),
     )
 
-    for (const result of details) {
-      if (result) results.set(result.sessionId, result.detail)
+    for (const outcome of outcomes) {
+      if (!outcome) continue
+      results.set(outcome.sessionId, outcome.contribution)
+      if (outcome.changed) {
+        contributionCache.set(outcome.sessionId, {
+          key: outcome.key,
+          contribution: outcome.contribution,
+        })
+        dirty = true
+      }
     }
   }
 
+  for (const sessionId of contributionCache.keys()) {
+    if (!knownSessionIds.has(sessionId)) {
+      contributionCache.delete(sessionId)
+      dirty = true
+    }
+  }
+
+  if (dirty) persistContributionCache()
   return results
 }
 
@@ -151,8 +298,11 @@ async function mergeRecentSessions(stats: StatsCache): Promise<StatsCache> {
     return stats
   }
 
-  // Parse full details for recent sessions (batched, max 10 concurrent)
-  const detailMap = await parseDetailsInBatches(recentSessions)
+  // Resolve contributions for recent sessions (batched, max 10 concurrent, cached)
+  const contributions = await collectContributions(
+    recentSessions,
+    new Set(summaries.map((s) => s.sessionId)),
+  )
 
   // Build a mutable copy of dailyActivity keyed by date
   const activityMap = new Map<string, { messageCount: number; sessionCount: number; toolCallCount: number }>()
@@ -190,28 +340,27 @@ async function mergeRecentSessions(stats: StatsCache): Promise<StatsCache> {
 
   for (const s of recentSessions) {
     const date = extractDateString(s.lastActiveAt ?? s.startedAt)
-    const detail = detailMap.get(s.sessionId)
+    const contribution = contributions.get(s.sessionId)
 
     const cur = activityMap.get(date) ?? { messageCount: 0, sessionCount: 0, toolCallCount: 0 }
     cur.sessionCount += 1
 
-    if (detail) {
+    if (contribution) {
       // Use accurate data from full parse
-      cur.messageCount += detail.turns.length
-      cur.toolCallCount += Object.values(detail.toolFrequency)
-        .reduce((sum, n) => sum + n, 0)
+      cur.messageCount += contribution.messageCount
+      cur.toolCallCount += contribution.toolCallCount
 
       // Populate dailyModelTokens with input+output tokens (matches stats-cache methodology;
       // cache tokens are excluded from daily totals but included in modelUsage aggregate)
       const dayTokens = modelTokensMap.get(date) ?? {}
-      for (const [model, usage] of Object.entries(detail.tokensByModel)) {
+      for (const [model, usage] of Object.entries(contribution.tokensByModel)) {
         const total = usage.inputTokens + usage.outputTokens
         dayTokens[model] = (dayTokens[model] ?? 0) + total
       }
       modelTokensMap.set(date, dayTokens)
 
       // Update aggregate modelUsage with per-category breakdown
-      for (const [model, usage] of Object.entries(detail.tokensByModel)) {
+      for (const [model, usage] of Object.entries(contribution.tokensByModel)) {
         const existing = modelUsage[model] ?? {
           inputTokens: 0, outputTokens: 0,
           cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
@@ -223,7 +372,7 @@ async function mergeRecentSessions(stats: StatsCache): Promise<StatsCache> {
         modelUsage[model] = existing
       }
 
-      additionalMessages += detail.turns.length
+      additionalMessages += contribution.messageCount
     } else {
       // Fallback: use summary data if parseDetail() failed for this session
       cur.messageCount += s.messageCount
@@ -244,7 +393,7 @@ async function mergeRecentSessions(stats: StatsCache): Promise<StatsCache> {
       longestSession = {
         sessionId: s.sessionId,
         duration: s.durationMs,
-        messageCount: detail?.turns.length ?? s.messageCount,
+        messageCount: contribution?.messageCount ?? s.messageCount,
         timestamp: s.lastActiveAt ?? s.startedAt,
       }
     }
@@ -300,8 +449,11 @@ async function computeStatsFromSessions(): Promise<StatsCache | null> {
   try {
     const summaries = await scanAllSessionsWithPaths()
 
-    // Parse full details for token and tool data
-    const detailMap = await parseDetailsInBatches(summaries)
+    // Resolve per-session token and tool contributions (cached across requests)
+    const contributions = await collectContributions(
+      summaries,
+      new Set(summaries.map((s) => s.sessionId)),
+    )
 
     // Group by date and aggregate
     const activityMap = new Map<string, { messageCount: number; sessionCount: number; toolCallCount: number }>()
@@ -317,27 +469,26 @@ async function computeStatsFromSessions(): Promise<StatsCache | null> {
 
     for (const s of summaries) {
       const d = (s.lastActiveAt ?? s.startedAt).split('T')[0]
-      const detail = detailMap.get(s.sessionId)
+      const contribution = contributions.get(s.sessionId)
 
       const cur = activityMap.get(d) ?? { messageCount: 0, sessionCount: 0, toolCallCount: 0 }
       cur.sessionCount += 1
 
-      if (detail) {
-        cur.messageCount += detail.turns.length
-        cur.toolCallCount += Object.values(detail.toolFrequency)
-          .reduce((sum, n) => sum + n, 0)
-        totalMessages += detail.turns.length
+      if (contribution) {
+        cur.messageCount += contribution.messageCount
+        cur.toolCallCount += contribution.toolCallCount
+        totalMessages += contribution.messageCount
 
         // Per-day model tokens (input+output only, matching stats-cache methodology)
         const dayTokens = modelTokensMap.get(d) ?? {}
-        for (const [model, usage] of Object.entries(detail.tokensByModel)) {
+        for (const [model, usage] of Object.entries(contribution.tokensByModel)) {
           const total = usage.inputTokens + usage.outputTokens
           dayTokens[model] = (dayTokens[model] ?? 0) + total
         }
         modelTokensMap.set(d, dayTokens)
 
         // Aggregate model usage
-        for (const [model, usage] of Object.entries(detail.tokensByModel)) {
+        for (const [model, usage] of Object.entries(contribution.tokensByModel)) {
           const existing = modelUsage[model] ?? {
             inputTokens: 0, outputTokens: 0,
             cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
@@ -358,7 +509,7 @@ async function computeStatsFromSessions(): Promise<StatsCache | null> {
       activityMap.set(d, cur)
       updateHourCounts(hourCounts, s)
 
-      const msgCount = detail?.turns.length ?? s.messageCount
+      const msgCount = contribution?.messageCount ?? s.messageCount
       if (s.durationMs > longestSession.duration) {
         longestSession = {
           sessionId: s.sessionId,

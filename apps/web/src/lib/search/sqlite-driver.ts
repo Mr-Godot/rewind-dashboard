@@ -44,7 +44,8 @@ export function loadSqliteDriver(dbPath: string): SqliteDriver | null {
         db.transaction(fn)) as SqliteDriver['transaction'],
       close: () => db.close(),
     }
-  } catch {
+  } catch (err) {
+    console.error('[search] better-sqlite3 unavailable, falling back to naive:', err)
     return null
   }
 }

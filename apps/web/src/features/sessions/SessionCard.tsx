@@ -157,7 +157,7 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
                 session.sessionState === 'working' ? 'border-matrix/25' : ''
               }`} title={titleText}>{titleText}</h3>
               {session.sessionState !== 'inactive' && (
-                <StatusBadge isActive={session.isActive} sessionState={session.sessionState} />
+                <StatusBadge sessionState={session.sessionState} />
               )}
             </div>
           )}
@@ -191,7 +191,7 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
       <div className="mt-3 flex items-center gap-4 text-xs text-gray-400">
         {session.totalTokens > 0 && <span title="Total tokens" className="text-matrix/70">{formatTokenCount(session.totalTokens)} tokens</span>}
         <span title="Duration" className="text-gray-500">
-          {session.isActive ? <RunningTimer startedAt={session.startedAt} /> : formatDuration(session.durationMs)}
+          {session.sessionState === 'working' ? <RunningTimer startedAt={session.startedAt} /> : formatDuration(session.durationMs)}
         </span>
         <span title="Messages">{session.messageCount} msgs</span>
         {session.model && (

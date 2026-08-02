@@ -1,142 +1,129 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { getSessionLiveState } from './active-detector'
+import type { LiveSession, LiveSessionsResult } from './live-sessions'
 
-vi.mock('node:fs', () => ({
-  promises: {
-    stat: vi.fn(),
-  },
-}))
-
-vi.mock('@/lib/utils/claude-path', () => ({
-  getProjectsDir: vi.fn(() => '/fake/projects'),
-}))
-
-import * as fs from 'node:fs'
-import * as path from 'node:path'
-import { isSessionActive } from './active-detector'
-
-const mockStat = fs.promises.stat as ReturnType<typeof vi.fn>
-
-const PROJECT_DIR = 'some-project'
+const NOW = 1_700_000_000_000
 const SESSION_ID = 'session-abc-123'
-const JSONL_PATH = path.join('/fake/projects', PROJECT_DIR, `${SESSION_ID}.jsonl`)
-// The subagents/tool-results dir — must NOT influence liveness (#29).
-const SUBAGENT_DIR_PATH = path.join('/fake/projects', PROJECT_DIR, SESSION_ID)
-const MTIME_THRESHOLD_MS = 120_000  // 2 minutes
+const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000
 
-function makeStatResult(mtimeMs: number, isDir = false) {
+function makeRecord(overrides: Partial<LiveSession> = {}): LiveSession {
   return {
-    mtimeMs,
-    isDirectory: () => isDir,
+    sessionId: SESSION_ID,
+    pid: 4242,
+    status: 'idle',
+    updatedAt: NOW,
+    ...overrides,
   }
 }
 
+function live(records: LiveSession[] = [], available = true): LiveSessionsResult {
+  return { available, sessions: new Map(records.map((r) => [r.sessionId, r])) }
+}
+
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
+})
+
+afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('isSessionActive', () => {
-  describe('jsonl file not found', () => {
-    it('returns false when jsonl stat throws ENOENT', async () => {
-      vi.setSystemTime(1_700_000_000_000)
-
-      mockStat.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
-
-      expect(result).toBe(false)
-      expect(mockStat).toHaveBeenCalledTimes(1)
-      expect(mockStat).toHaveBeenCalledWith(JSONL_PATH)
+describe('getSessionLiveState', () => {
+  describe('registry available', () => {
+    it('REGRESSION: a fresh mtime does NOT make a session absent from the registry active', () => {
+      // The user's bug: `claude --resume` (or any write) touches a months-old
+      // JSONL and the old mtime heuristic reported "working" forever.
+      expect(getSessionLiveState(SESSION_ID, live([]), NOW)).toBe('inactive')
     })
 
-    it('returns false when jsonl stat throws permission error', async () => {
-      vi.setSystemTime(1_700_000_000_000)
+    it('returns inactive for a session absent from the registry even when other sessions are live', () => {
+      const registry = live([makeRecord({ sessionId: 'other', status: 'busy' })])
 
-      mockStat.mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
-
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
-
-      expect(result).toBe(false)
-    })
-  })
-
-  describe('mtime-based liveness (single threshold)', () => {
-    it('returns true when jsonl mtime < 2 minutes', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
-
-      mockStat.mockResolvedValueOnce(makeStatResult(now - 60_000))
-
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
-
-      expect(result).toBe(true)
+      expect(getSessionLiveState(SESSION_ID, registry, NOW)).toBe('inactive')
     })
 
-    it('returns false when jsonl mtime > 2 minutes', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
+    it('returns waiting for a live pid with status idle and a 6-month-old mtime', () => {
+      const registry = live([makeRecord({ status: 'idle' })])
 
-      mockStat.mockResolvedValueOnce(makeStatResult(now - MTIME_THRESHOLD_MS - 1))
-
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
-
-      expect(result).toBe(false)
+      expect(getSessionLiveState(SESSION_ID, registry, NOW - SIX_MONTHS_MS)).toBe('waiting')
     })
 
-    it('returns true at exactly the 2-minute boundary', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
+    it('returns waiting for a live pid with status idle and a brand new mtime', () => {
+      const registry = live([makeRecord({ status: 'idle' })])
 
-      mockStat.mockResolvedValueOnce(makeStatResult(now - MTIME_THRESHOLD_MS))
-
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
-
-      expect(result).toBe(true)
+      // mtime can only DEMOTE a busy record — it never promotes an idle one.
+      expect(getSessionLiveState(SESSION_ID, registry, NOW)).toBe('waiting')
     })
 
-    it('decides liveness from the jsonl file alone (single stat call)', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
+    it('returns working for a live pid with status busy and a 1-minute-old mtime', () => {
+      const registry = live([makeRecord({ status: 'busy' })])
 
-      mockStat.mockResolvedValueOnce(makeStatResult(now - 60_000))
+      expect(getSessionLiveState(SESSION_ID, registry, NOW - 60_000)).toBe('working')
+    })
 
-      await isSessionActive(PROJECT_DIR, SESSION_ID)
+    it('returns waiting for status busy with a 6-month-old mtime (killed-while-busy hole)', () => {
+      const registry = live([makeRecord({ status: 'busy' })])
 
-      // Only the jsonl is stat'd — the subagent dir is never consulted.
-      expect(mockStat).toHaveBeenCalledTimes(1)
-      expect(mockStat).toHaveBeenCalledWith(JSONL_PATH)
-      expect(mockStat).not.toHaveBeenCalledWith(SUBAGENT_DIR_PATH)
+      expect(getSessionLiveState(SESSION_ID, registry, NOW - SIX_MONTHS_MS)).toBe('waiting')
+    })
+
+    it('demotes a busy record exactly past the 30-minute window', () => {
+      const registry = live([makeRecord({ status: 'busy' })])
+
+      expect(getSessionLiveState(SESSION_ID, registry, NOW - 30 * 60_000)).toBe('working')
+      expect(getSessionLiveState(SESSION_ID, registry, NOW - 30 * 60_000 - 1)).toBe('waiting')
+    })
+
+    it('treats an unknown status as waiting, never working', () => {
+      const registry = live([makeRecord({ status: 'unknown' })])
+
+      expect(getSessionLiveState(SESSION_ID, registry, NOW)).toBe('waiting')
     })
   })
 
-  describe('subagent dir is not a liveness signal (#29)', () => {
-    it('returns false for a stale session even when a subagent dir exists on disk', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
+  describe('registry unavailable (legacy mtime fallback)', () => {
+    const unavailable = live([], false)
 
-      // jsonl is 10 min old: well past the 2-min window. A subagents dir may
-      // exist (this session used subagents) but must NOT extend liveness.
-      mockStat.mockResolvedValueOnce(makeStatResult(now - 600_000))
+    it('returns working when the jsonl was written under 2 minutes ago', () => {
+      expect(getSessionLiveState(SESSION_ID, unavailable, NOW - 60_000)).toBe('working')
+    })
 
-      const result = await isSessionActive(PROJECT_DIR, SESSION_ID)
+    it('returns working exactly at the 2-minute boundary', () => {
+      expect(getSessionLiveState(SESSION_ID, unavailable, NOW - 120_000)).toBe('working')
+    })
 
-      expect(result).toBe(false)
-      // No second stat for the subagent dir — it is irrelevant to liveness.
-      expect(mockStat).toHaveBeenCalledTimes(1)
-      expect(mockStat).not.toHaveBeenCalledWith(SUBAGENT_DIR_PATH)
+    it('returns inactive past the 2-minute boundary', () => {
+      expect(getSessionLiveState(SESSION_ID, unavailable, NOW - 120_001)).toBe('inactive')
+    })
+
+    it('never returns waiting when the registry is unavailable', () => {
+      const states = [NOW, NOW - 60_000, NOW - 600_000, NOW - SIX_MONTHS_MS].map((m) =>
+        getSessionLiveState(SESSION_ID, unavailable, m),
+      )
+
+      expect(states).toEqual(['working', 'working', 'inactive', 'inactive'])
+    })
+
+    it('ignores any records that happen to be in the map when available is false', () => {
+      const stale = { available: false, sessions: new Map([[SESSION_ID, makeRecord({ status: 'busy' })]]) }
+
+      expect(getSessionLiveState(SESSION_ID, stale, NOW - 600_000)).toBe('inactive')
     })
   })
 
-  describe('path construction', () => {
-    it('constructs the correct jsonl path', async () => {
-      const now = 1_700_000_000_000
-      vi.setSystemTime(now)
+  describe('purity (#29: the subagent dir is never a liveness signal)', () => {
+    it('touches no filesystem API — the mtime is passed in, never re-stat-ed', async () => {
+      // active-detector no longer imports node:fs at all. If it did, this spy
+      // would be the only way it could reach the disk.
+      const fs = await import('node:fs')
+      const statSpy = vi.spyOn(fs.promises, 'stat')
 
-      mockStat.mockResolvedValueOnce(makeStatResult(now - 1_000))
+      getSessionLiveState(SESSION_ID, live([makeRecord({ status: 'busy' })]), NOW)
+      getSessionLiveState(SESSION_ID, live([], false), NOW)
 
-      await isSessionActive('my-project-dir', 'my-session-id')
-
-      expect(mockStat).toHaveBeenCalledWith(path.join('/fake/projects', 'my-project-dir', 'my-session-id.jsonl'))
+      expect(statSpy).not.toHaveBeenCalled()
+      statSpy.mockRestore()
     })
   })
 })

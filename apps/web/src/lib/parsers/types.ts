@@ -28,6 +28,15 @@ export interface SessionSummary {
   claudeName: string | null
 }
 
+/**
+ * Liveness snapshot for one session, read from Claude Code's process registry
+ * without any filesystem scan. Client-safe (no node:fs in this module).
+ */
+export interface LiveSessionState {
+  sessionId: string
+  sessionState: 'working' | 'waiting'
+}
+
 // --- Session detail (full streaming parse) ---
 
 export interface Turn {

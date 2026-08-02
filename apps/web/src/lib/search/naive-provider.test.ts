@@ -35,7 +35,25 @@ beforeAll(() => {
     { type: 'user', timestamp: 't1', message: { role: 'user', content: [{ type: 'text', text: 'first widget line' }] } },
     { type: 'assistant', timestamp: 't2', message: { role: 'assistant', content: [{ type: 'text', text: 'second widget line' }] } },
   ])
+  // Spread across two project dirs, newest content first, to pin ordering.
+  writeSession('-Users-z-second', 'sess-newest', [
+    { type: 'user', timestamp: '2026-08-01T00:00:00.000Z', message: { role: 'user', content: [{ type: 'text', text: 'orderterm newest' }] } },
+  ])
+  writeSession('-Users-a-proj', 'sess-oldest', [
+    { type: 'user', timestamp: '2020-01-01T00:00:00.000Z', message: { role: 'user', content: [{ type: 'text', text: 'orderterm oldest' }] } },
+  ])
 })
+
+/** Flattened fs.readdir order over the fixture tree, for the ordering pin. */
+function readdirOrder(): string[] {
+  const ids: string[] = []
+  for (const dir of fs.readdirSync(ctx.projectsDir)) {
+    for (const file of fs.readdirSync(path.join(ctx.projectsDir, dir))) {
+      if (file.endsWith('.jsonl')) ids.push(file.replace('.jsonl', ''))
+    }
+  }
+  return ids
+}
 
 afterAll(() => {
   fs.rmSync(ctx.root, { recursive: true, force: true })
@@ -78,6 +96,17 @@ describe('NaiveSearchProvider (parity with the original scan)', () => {
     const res = await provider.search({ query: 'widget', limit: 1 })
     expect(res.hits.length).toBeLessThanOrEqual(1)
     expect(res.total).toBe(res.hits.length)
+  })
+
+  it('returns hits in fs.readdir order, NOT by recency or relevance', async () => {
+    const provider = new NaiveSearchProvider()
+    const res = await provider.search({ query: 'orderterm' })
+
+    const expected = readdirOrder().filter((id) => res.hits.some((h) => h.sessionId === id))
+    expect(res.hits.map((h) => h.sessionId)).toEqual(expected)
+    // Whichever readdir order the OS gives, it is not a recency order: the
+    // fallback cannot rank, and a silent degrade to it must be diagnosable.
+    expect(expected).toHaveLength(2)
   })
 
   it('returns nothing for too-short queries', async () => {

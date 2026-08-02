@@ -1,5 +1,5 @@
 import { queryOptions, keepPreviousData } from '@tanstack/react-query'
-import { getSessionList, getActiveSessionList, getPaginatedSessions } from './sessions.api'
+import { getSessionList, getLiveSessionList, getPaginatedSessions } from './sessions.api'
 
 export const sessionListQuery = queryOptions({
   queryKey: ['sessions', 'list'],
@@ -9,7 +9,7 @@ export const sessionListQuery = queryOptions({
 
 export const activeSessionsQuery = queryOptions({
   queryKey: ['sessions', 'active'],
-  queryFn: () => getActiveSessionList(),
+  queryFn: () => getLiveSessionList(),
   refetchInterval: 3_000,
 })
 

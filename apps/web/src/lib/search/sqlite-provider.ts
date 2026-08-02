@@ -23,6 +23,8 @@ const DEFAULT_THROTTLE_MS = 5000
 const SNIPPET_TOKENS = 12
 /** Cap on the number of FTS terms built from a single query. */
 const MAX_QUERY_TERMS = 32
+/** Files indexed between event-loop yields during a refresh pass. */
+const YIELD_EVERY_FILES = 25
 
 const CREATE_SQL = `
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -148,6 +150,7 @@ export class SqliteSearchProvider implements SearchProvider {
   private db: SqliteDriver | null = null
   private initialized = false
   private lastRefresh = 0
+  private inFlightRefresh: Promise<IndexStats> | null = null
 
   private selectFilesStmt: SqliteStatement | null = null
   private deleteBlocksStmt: SqliteStatement | null = null
@@ -266,7 +269,26 @@ export class SqliteSearchProvider implements SearchProvider {
     }) as typeof this.removeSessionTxn
   }
 
+  /**
+   * Incrementally reindex changed session files.
+   *
+   * Concurrent callers share ONE pass: a cold index takes tens of seconds and
+   * the write lock is synchronous, so overlapping passes serialize into a
+   * multi-minute stall. The throttle is measured from the END of the previous
+   * pass for the same reason: measuring from the start admits a duplicate scan
+   * the moment the pass runs longer than the throttle window.
+   */
   async refresh(opts?: { force?: boolean }): Promise<IndexStats> {
+    if (this.inFlightRefresh) return this.inFlightRefresh
+    this.inFlightRefresh = this.runRefresh(opts)
+    try {
+      return await this.inFlightRefresh
+    } finally {
+      this.inFlightRefresh = null
+    }
+  }
+
+  private async runRefresh(opts?: { force?: boolean }): Promise<IndexStats> {
     const start = Date.now()
     const db = this.ensureDb()
     if (!db) return emptyIndexStats(Date.now() - start)
@@ -275,9 +297,9 @@ export class SqliteSearchProvider implements SearchProvider {
     if (!force && start - this.lastRefresh < this.throttleMs) {
       return emptyIndexStats(Date.now() - start)
     }
-    this.lastRefresh = start
 
     const stats = emptyIndexStats()
+    let processed = 0
 
     const existing = new Map<string, number>()
     for (const row of this.selectFilesStmt!.all() as FileRow[]) {
@@ -290,6 +312,11 @@ export class SqliteSearchProvider implements SearchProvider {
 
     for (const project of projects) {
       for (const file of project.sessionFiles) {
+        if (++processed % YIELD_EVERY_FILES === 0) {
+          // Hand the single Node event loop back so a long pass does not block
+          // every other request for its whole duration.
+          await new Promise((r) => setImmediate(r))
+        }
         const sessionId = extractSessionId(file)
         seen.add(sessionId)
         const filePath = path.join(projectsDir, project.dirName, file)
@@ -331,7 +358,24 @@ export class SqliteSearchProvider implements SearchProvider {
     }
 
     stats.durationMs = Date.now() - start
+    this.lastRefresh = Date.now()
     return stats
+  }
+
+  /**
+   * ISO timestamp of the newest source file mtime present in the index, or null
+   * when the index is empty. Content newer than this is NOT searchable yet.
+   */
+  indexedThrough(): string | null {
+    try {
+      const row = this.db?.prepare('SELECT MAX(mtime_ms) m FROM indexed_files').get() as
+        | { m: number | null }
+        | undefined
+      if (!row || row.m == null) return null
+      return new Date(row.m).toISOString()
+    } catch {
+      return null
+    }
   }
 
   async search(query: SearchQuery): Promise<SearchResult> {
@@ -342,12 +386,25 @@ export class SqliteSearchProvider implements SearchProvider {
 
     const db = this.ensureDb()
     if (!db) {
-      return { hits: [], total: 0, tookMs: Date.now() - start, provider: this.name, degraded: true }
+      return {
+        hits: [],
+        total: 0,
+        tookMs: Date.now() - start,
+        provider: this.name,
+        degraded: true,
+        indexedThrough: null,
+      }
     }
 
     const match = sanitizeFtsQuery(query.query)
     if (!match) {
-      return { hits: [], total: 0, tookMs: Date.now() - start, provider: this.name }
+      return {
+        hits: [],
+        total: 0,
+        tookMs: Date.now() - start,
+        provider: this.name,
+        indexedThrough: this.indexedThrough(),
+      }
     }
 
     const filters: string[] = []
@@ -373,14 +430,20 @@ export class SqliteSearchProvider implements SearchProvider {
     let total: number
 
     if (groupBySession) {
+      // The representative row per session is the most RECENT match, not the
+      // best-scoring one: the UI renders hit.timestamp next to hit.snippet, so
+      // the sort key, the rendered date and the snippet must all come from the
+      // same row. A MAX(ts) OVER (...) sort key would come from a different row
+      // than the snippet and reintroduces visible date inversions.
+      // LIMIT applies to sessions here, since one row survives per session.
       const sql = `
         SELECT sid, pp, pn, role, bt, ts, score, snip, mc FROM (
-          SELECT *, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY score ASC, seq ASC) rn,
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY ts DESC, score ASC, seq ASC) rn,
             COUNT(*) OVER (PARTITION BY sid) mc
           FROM (${inner})
         )
         WHERE rn = 1
-        ORDER BY score ASC
+        ORDER BY ts DESC, sid ASC
         LIMIT ? OFFSET ?`
       rows = db.prepare(sql).all(match, ...filterParams, limit, offset) as MatchRow[]
       const totalRow = db
@@ -395,7 +458,7 @@ export class SqliteSearchProvider implements SearchProvider {
       const sql = `
         SELECT sid, pp, pn, role, bt, ts, score, snip, 1 mc
         FROM (${inner})
-        ORDER BY score ASC
+        ORDER BY ts DESC, score ASC, seq ASC
         LIMIT ? OFFSET ?`
       rows = db.prepare(sql).all(match, ...filterParams, limit, offset) as MatchRow[]
       const totalRow = db
@@ -420,7 +483,13 @@ export class SqliteSearchProvider implements SearchProvider {
       matchCount: r.mc,
     }))
 
-    return { hits, total, tookMs: Date.now() - start, provider: this.name }
+    return {
+      hits,
+      total,
+      tookMs: Date.now() - start,
+      provider: this.name,
+      indexedThrough: this.indexedThrough(),
+    }
   }
 
   close(): void {

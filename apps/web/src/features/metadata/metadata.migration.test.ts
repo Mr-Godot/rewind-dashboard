@@ -29,7 +29,8 @@ vi.mock('node:fs', () => ({
   readdirSync: () => [],
 }))
 
-import { migrateProjectKeys, hideProject, pinProject } from './metadata.api'
+import { migrateProjectKeys, hideProject, pinProject, hideSession, pinSession } from './metadata.api'
+import { MetadataSchema } from './metadata.types'
 import type { Metadata } from './metadata.types'
 
 // All dir names below are Windows-style (double-dash), so decoding is independent
@@ -138,5 +139,108 @@ describe('project mutation mutual exclusion', () => {
 
     const written = JSON.parse(store.content!) as Metadata
     expect(written.projects['dir-x']).toEqual({ pinned: true })
+  })
+})
+
+describe('session hidden field', () => {
+  beforeEach(() => {
+    store.content = null
+    store.tmp = null
+  })
+
+  it('loads a pre-existing v2 file that has no session hidden field, unchanged', () => {
+    const parsed = MetadataSchema.parse({
+      version: 2,
+      sessions: { 'sess-1': { pinned: true }, 'sess-2': { customName: 'keep me' } },
+      projects: { 'dir-x': { hidden: true } },
+    })
+
+    expect(parsed.version).toBe(2)
+    expect(parsed.sessions['sess-1']).toEqual({ pinned: true })
+    expect(parsed.sessions['sess-1'].hidden).toBeUndefined()
+    expect(parsed.projects['dir-x']).toEqual({ hidden: true })
+  })
+
+  it('accepts hidden on a session without bumping the file version', () => {
+    const parsed = MetadataSchema.parse({
+      version: 2,
+      sessions: { 'sess-1': { hidden: true, customName: 'keep me' } },
+      projects: {},
+    })
+
+    expect(parsed.version).toBe(2)
+    expect(parsed.sessions['sess-1']).toEqual({ hidden: true, customName: 'keep me' })
+  })
+
+  it('hideSession writes only the target session and leaves projects untouched', async () => {
+    store.content = JSON.stringify({
+      version: 2,
+      sessions: { 'sess-1': { customName: 'keep me' }, 'sess-2': { pinned: true } },
+      projects: { 'dir-x': { pinned: true } },
+    })
+
+    await hideSession({ data: { sessionId: 'sess-1', hidden: true } })
+
+    const written = JSON.parse(store.content!) as Metadata
+    expect(written.version).toBe(2)
+    expect(written.sessions['sess-1']).toEqual({ customName: 'keep me', hidden: true })
+    expect(written.sessions['sess-2']).toEqual({ pinned: true })
+    // Hiding a session must never touch its project.
+    expect(written.projects).toEqual({ 'dir-x': { pinned: true } })
+  })
+
+  it('hideProject leaves every session entry untouched', async () => {
+    store.content = JSON.stringify({
+      version: 2,
+      sessions: { 'sess-1': { pinned: true } },
+      projects: {},
+    })
+
+    await hideProject({ data: { projectDir: 'dir-x', hidden: true } })
+
+    const written = JSON.parse(store.content!) as Metadata
+    expect(written.sessions).toEqual({ 'sess-1': { pinned: true } })
+    expect(written.sessions['sess-1'].hidden).toBeUndefined()
+  })
+
+  it('unhiding drops the flag and prunes an entry that holds nothing else', async () => {
+    store.content = JSON.stringify({
+      version: 2,
+      sessions: { 'sess-1': { hidden: true } },
+      projects: {},
+    })
+
+    await hideSession({ data: { sessionId: 'sess-1', hidden: false } })
+
+    const written = JSON.parse(store.content!) as Metadata
+    expect(written.sessions['sess-1']).toBeUndefined()
+  })
+
+  it('session pin and hide stay mutually exclusive, like projects', async () => {
+    store.content = JSON.stringify({
+      version: 2,
+      sessions: { 'sess-1': { pinned: true } },
+      projects: {},
+    })
+
+    await hideSession({ data: { sessionId: 'sess-1', hidden: true } })
+    expect((JSON.parse(store.content!) as Metadata).sessions['sess-1']).toEqual({ hidden: true })
+
+    await pinSession({ data: { sessionId: 'sess-1', pinned: true } })
+    expect((JSON.parse(store.content!) as Metadata).sessions['sess-1']).toEqual({ pinned: true })
+  })
+
+  it('migrateProjectKeys carries session hidden flags through the v1 to v2 remap', () => {
+    const migrated = migrateProjectKeys(
+      {
+        version: 1,
+        sessions: { 'sess-1': { hidden: true }, 'sess-2': { pinned: true } },
+        projects: { 'C:/Users-dev/work-extra': { hidden: true } },
+      },
+      [DIR_EXTRA],
+    )
+
+    expect(migrated.version).toBe(2)
+    expect(migrated.sessions).toEqual({ 'sess-1': { hidden: true }, 'sess-2': { pinned: true } })
   })
 })

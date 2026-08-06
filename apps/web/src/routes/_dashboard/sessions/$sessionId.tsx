@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
-import { usePinSession, useRenameSession } from '@/features/metadata/useMetadataMutations'
+import { usePinSession, useRenameSession, useHideSession } from '@/features/metadata/useMetadataMutations'
 import { LaunchButton } from '@/components/LaunchButton'
 import { sessionDetailQuery } from '@/features/session-detail/session-detail.queries'
 import { chatQuery } from '@/features/sessions/chat.queries'
@@ -47,6 +47,24 @@ function DetailPinButton({ sessionId, pinned }: { sessionId: string; pinned: boo
       }`}
     >
       {pinned ? '\u2605 Pinned' : '\u2606 Pin'}
+    </button>
+  )
+}
+
+function DetailHideButton({ sessionId, hidden }: { sessionId: string; hidden: boolean }) {
+  const mutation = useHideSession()
+  return (
+    <button
+      type="button"
+      title={hidden ? 'Unhide this session' : 'Hide this session from the list'}
+      onClick={() => mutation.mutate({ sessionId, hidden: !hidden })}
+      className={`shrink-0 rounded px-2 py-1 text-xs transition-colors ${
+        hidden
+          ? 'bg-blue-900/50 text-blue-400 hover:bg-blue-800/60'
+          : 'bg-gray-800 text-gray-500 hover:text-gray-300'
+      }`}
+    >
+      {hidden ? 'Hidden (unhide)' : 'Hide'}
     </button>
   )
 }
@@ -240,6 +258,7 @@ function SessionDetailPage() {
         </div>
         <div className="flex items-center gap-2">
           <DetailPinButton sessionId={sessionId} pinned={sessionMeta?.pinned ?? false} />
+          <DetailHideButton sessionId={sessionId} hidden={sessionMeta?.hidden ?? false} />
           <DetailRenameButton sessionId={sessionId} currentName={sessionMeta?.customName || ''} placeholder={sessionTitle} />
           <LaunchButton sessionId={sessionId} cwd={detail.cwd || detail.projectPath} size="md" />
           <ExportDropdown

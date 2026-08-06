@@ -38,6 +38,14 @@ export interface HiddenProjectSummary {
   sessionCount: number
 }
 
+export interface HiddenSessionSummary {
+  sessionId: string
+  projectName: string
+  customName?: string
+  claudeName: string | null
+  firstUserMessage: string | null
+}
+
 export interface PaginatedSessionsResult {
   sessions: SessionSummary[]
   totalCount: number
@@ -49,6 +57,9 @@ export interface PaginatedSessionsResult {
   projectDirs: string[]
   hiddenProjects: HiddenProjectSummary[]
   hiddenSessionCount: number
+  /** Sessions hidden one by one, excluding any that already live in a hidden project. */
+  hiddenSessions: HiddenSessionSummary[]
+  hiddenSessionOnlyCount: number
 }
 
 /**
@@ -89,9 +100,42 @@ export async function paginateAndFilterSessions(
   )
   const hiddenSessionCount = hiddenProjects.reduce((sum, p) => sum + p.sessionCount, 0)
 
+  // Individually hidden sessions, keyed by sessionId and fully independent of
+  // the project flags above.
+  const hiddenSessionKeys = new Set(
+    Object.entries(metadata?.sessions ?? {})
+      .filter(([, v]) => v.hidden)
+      .map(([k]) => k),
+  )
+
+  // Summarize them from the full set, excluding any already counted under a
+  // hidden project so the two banner numbers never overlap.
+  const hiddenSessions: HiddenSessionSummary[] = []
+  if (hiddenSessionKeys.size > 0) {
+    for (const s of allSessions) {
+      if (!hiddenSessionKeys.has(s.sessionId)) continue
+      if (hiddenProjectKeys.has(s.projectDir)) continue
+      hiddenSessions.push({
+        sessionId: s.sessionId,
+        projectName: s.projectName,
+        customName: metadata?.sessions[s.sessionId]?.customName,
+        claudeName: s.claudeName,
+        firstUserMessage: s.firstUserMessage,
+      })
+    }
+  }
+  const hiddenSessionOnlyCount = hiddenSessions.length
+
   // Filter out sessions from hidden projects (unless showHidden)
   if (!showHidden && hiddenProjectKeys.size > 0 && !project) {
     allSessions = allSessions.filter((s) => s.isActive || !hiddenProjectKeys.has(s.projectDir))
+  }
+
+  // Filter out individually hidden sessions (unless showHidden). Unlike the
+  // project rule above this is absolute: it targets one exact session the user
+  // deliberately hid, so neither a project filter nor liveness overrides it.
+  if (!showHidden && hiddenSessionKeys.size > 0) {
+    allSessions = allSessions.filter((s) => !hiddenSessionKeys.has(s.sessionId))
   }
 
   // Extract distinct project names from (non-hidden) set
@@ -217,6 +261,8 @@ export async function paginateAndFilterSessions(
     projectDirs,
     hiddenProjects,
     hiddenSessionCount,
+    hiddenSessions,
+    hiddenSessionOnlyCount,
   }
 }
 

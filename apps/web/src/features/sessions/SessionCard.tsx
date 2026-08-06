@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { SessionSummary } from '@/lib/parsers/types'
 import type { SessionMetadataEntry, ProjectMetadataEntry } from '@/features/metadata/metadata.types'
-import { usePinSession, useRenameSession, useHideProject } from '@/features/metadata/useMetadataMutations'
+import { usePinSession, useRenameSession, useHideProject, useHideSession } from '@/features/metadata/useMetadataMutations'
 import { LaunchButton } from '@/components/LaunchButton'
 import { formatDuration, formatRelativeTime, formatDateTime, formatBytes, formatTokenCount } from '@/lib/utils/format'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
@@ -48,13 +48,16 @@ function HideButton({ projectDir, projectName }: { projectDir: string; projectNa
 
 function OverflowMenu({
   sessionId,
+  sessionHidden,
   onStartRename,
 }: {
   sessionId: string
+  sessionHidden: boolean
   onStartRename: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const hideMutation = useHideSession()
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -84,6 +87,17 @@ function OverflowMenu({
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
           >
             Rename
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault(); e.stopPropagation()
+              hideMutation.mutate({ sessionId, hidden: !sessionHidden })
+              setOpen(false)
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
+          >
+            {sessionHidden ? 'Unhide session' : 'Hide session'}
           </button>
           <button
             type="button"
@@ -130,6 +144,7 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
   const [isRenaming, setIsRenaming] = useState(false)
 
   const isPinned = metadata?.pinned ?? false
+  const isHidden = metadata?.hidden ?? false
   const customName = metadata?.customName
   const displayName = projectMeta?.customName || (privacyMode ? anonymizeProjectName(session.projectName) : session.projectName)
   const displayCwd = session.cwd ? anonymizePath(session.cwd, session.projectName) : null
@@ -180,6 +195,11 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
             >
               project: {displayName}
             </button>
+            {isHidden && (
+              <span className="border border-gray-700 bg-gray-800/60 px-1.5 py-0.5 text-gray-400">
+                hidden
+              </span>
+            )}
           </div>
         </div>
 
@@ -189,6 +209,7 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
           <LaunchButton sessionId={session.sessionId} cwd={session.cwd || session.projectPath} isActive={session.isActive} />
           <OverflowMenu
             sessionId={session.sessionId}
+            sessionHidden={isHidden}
             onStartRename={() => setIsRenaming(true)}
           />
           <span className="ml-1 text-xs text-gray-500" title={formatDateTime(session.lastActiveAt)}>{formatRelativeTime(session.lastActiveAt)}</span>

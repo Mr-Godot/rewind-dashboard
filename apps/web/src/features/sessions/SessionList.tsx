@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { paginatedSessionListQuery, activeSessionsQuery } from './sessions.queries'
-import type { HiddenProjectSummary } from './sessions.api'
+import type { HiddenProjectSummary, HiddenSessionSummary } from './sessions.api'
 import { metadataQuery } from '@/features/metadata/metadata.queries'
 import { SessionCard } from './SessionCard'
 import { SessionFilters } from './SessionFilters'
@@ -15,7 +15,8 @@ import {
 } from './useSessionFilterPreferences'
 import { SessionListGrouped } from './SessionListGrouped'
 import { countWorkingSessions, hasWorkingSession, mergeLiveStates } from './active-merge'
-import { useHideProject } from '@/features/metadata/useMetadataMutations'
+import { useHideProject, useHideSession } from '@/features/metadata/useMetadataMutations'
+import { resolveSessionTitle } from './session-title'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { FullTextSearchResults, MIN_FTS_QUERY_LENGTH } from './FullTextSearchResults'
 import { EmptyState } from '@/components/EmptyState'
@@ -186,6 +187,9 @@ export function SessionList() {
   const activeCount = countWorkingSessions(activeSessions)
   const hiddenSessionCount = paginatedData?.hiddenSessionCount ?? 0
   const hiddenProjects = paginatedData?.hiddenProjects ?? []
+  const hiddenSessions = paginatedData?.hiddenSessions ?? []
+  const hiddenSessionOnlyCount = paginatedData?.hiddenSessionOnlyCount ?? 0
+  const totalHiddenCount = hiddenSessionCount + hiddenSessionOnlyCount
   const noActiveFilter = !search && status === 'all' && !project
   // Additive only. Swapping in a skeleton here would defeat keepPreviousData
   // and blank a populated list on every search keystroke.
@@ -221,10 +225,11 @@ export function SessionList() {
         searchRef={searchInputRef}
       />
 
-      {hiddenSessionCount > 0 && (
+      {totalHiddenCount > 0 && (
         <HiddenBanner
           hiddenSessionCount={hiddenSessionCount}
           hiddenProjects={hiddenProjects}
+          hiddenSessions={hiddenSessions}
           showHidden={showHidden}
           onToggle={toggleShowHidden}
         />
@@ -254,11 +259,17 @@ export function SessionList() {
           // cleared. keepPreviousData is untouched: this branch only runs when
           // there are zero rows to preserve.
           busy ? null : totalCount === 0 &&
-            hiddenSessionCount > 0 &&
+            totalHiddenCount > 0 &&
             noActiveFilter ? (
             <EmptyState
               title="Every session is hidden"
-              hint={`All ${hiddenSessionCount} sessions live in projects you have hidden.`}
+              hint={
+                hiddenSessionOnlyCount === 0
+                  ? `All ${hiddenSessionCount} sessions live in projects you have hidden.`
+                  : hiddenSessionCount === 0
+                    ? `All ${hiddenSessionOnlyCount} sessions were hidden one by one.`
+                    : `All ${totalHiddenCount} sessions are hidden: ${hiddenSessionCount} in hidden projects, ${hiddenSessionOnlyCount} hidden one by one.`
+              }
               action={
                 <button
                   type="button"
@@ -343,25 +354,37 @@ export function SessionList() {
 function HiddenBanner({
   hiddenSessionCount,
   hiddenProjects,
+  hiddenSessions,
   showHidden,
   onToggle,
 }: {
   hiddenSessionCount: number
   hiddenProjects: HiddenProjectSummary[]
+  hiddenSessions: HiddenSessionSummary[]
   showHidden: boolean
   onToggle: () => void
 }) {
   const { privacyMode, anonymizeProjectName } = usePrivacy()
   const hideMutation = useHideProject()
+  const hideSessionMutation = useHideSession()
   const [expanded, setExpanded] = useState(false)
   const projectCount = hiddenProjects.length
+  const sessionOnlyCount = hiddenSessions.length
+
+  const projectPart =
+    projectCount > 0
+      ? `${hiddenSessionCount} ${hiddenSessionCount === 1 ? 'session' : 'sessions'} in ${projectCount} hidden ${projectCount === 1 ? 'project' : 'projects'}`
+      : null
+  const sessionPart =
+    sessionOnlyCount > 0
+      ? `${sessionOnlyCount} ${sessionOnlyCount === 1 ? 'session' : 'sessions'} hidden one by one`
+      : null
+  const summary = [projectPart, sessionPart].filter(Boolean).join(', plus ')
 
   return (
     <div className="mt-3 border border-gray-800 bg-gray-900/60 px-3 py-1.5 text-xs text-gray-400">
       <div className="flex items-center gap-2">
-        <span>
-          {hiddenSessionCount} sessions in {projectCount} {projectCount === 1 ? 'project' : 'projects'} hidden
-        </span>
+        <span>{summary}</span>
         <button
           type="button"
           onClick={onToggle}
@@ -369,7 +392,7 @@ function HiddenBanner({
         >
           [{showHidden ? 'hide' : 'show'}]
         </button>
-        {projectCount > 0 && (
+        {(projectCount > 0 || sessionOnlyCount > 0) && (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -390,6 +413,27 @@ function HiddenBanner({
               <button
                 type="button"
                 onClick={() => hideMutation.mutate({ projectDir: p.projectDir, hidden: false })}
+                className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-blue-400 transition-colors hover:bg-blue-800/60"
+              >
+                unhide
+              </button>
+            </div>
+          ))}
+          {hiddenSessions.map((s) => (
+            <div key={s.sessionId} className="flex items-center justify-between gap-2">
+              <span className="truncate">
+                {resolveSessionTitle({
+                  customName: s.customName,
+                  claudeName: s.claudeName,
+                  firstUserMessage: s.firstUserMessage,
+                  fallback: privacyMode ? anonymizeProjectName(s.projectName) : s.projectName,
+                  privacyMode,
+                })}
+                <span className="ml-1 font-mono text-gray-600">{s.sessionId.slice(0, 8)}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => hideSessionMutation.mutate({ sessionId: s.sessionId, hidden: false })}
                 className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-blue-400 transition-colors hover:bg-blue-800/60"
               >
                 unhide

@@ -692,6 +692,143 @@ describe('paginateAndFilterSessions', () => {
     })
   })
 
+  describe('hidden session filter (keyed by sessionId)', () => {
+    const baseInput = {
+      page: 1,
+      pageSize: 10,
+      search: '',
+      status: 'all' as const,
+      project: '',
+      sort: 'latest' as const,
+      starFirst: true,
+    }
+
+    it('filters out an individually hidden session and leaves its siblings alone', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'keep-1', projectDir: '-dir-a', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'drop-me', projectDir: '-dir-a', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'keep-2', projectDir: '-dir-a', projectName: 'alpha' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { 'drop-me': { hidden: true } },
+        projects: {},
+      }
+
+      const result = await paginateAndFilterSessions(sessions, baseInput, metadata)
+
+      expect(result.sessions.map((s) => s.sessionId).sort()).toEqual(['keep-1', 'keep-2'])
+      expect(result.hiddenSessionOnlyCount).toBe(1)
+      expect(result.hiddenSessions).toHaveLength(1)
+      expect(result.hiddenSessions[0].sessionId).toBe('drop-me')
+      expect(result.hiddenSessions[0].projectName).toBe('alpha')
+      // Hiding a session must not mark its project hidden.
+      expect(result.hiddenProjects).toEqual([])
+      expect(result.hiddenSessionCount).toBe(0)
+    })
+
+    it('reveals individually hidden sessions when showHidden is true', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'keep-1', projectDir: '-dir-a', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'drop-me', projectDir: '-dir-a', projectName: 'alpha' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { 'drop-me': { hidden: true } },
+        projects: {},
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { ...baseInput, showHidden: true },
+        metadata,
+      )
+
+      expect(result.sessions.map((s) => s.sessionId).sort()).toEqual(['drop-me', 'keep-1'])
+      expect(result.hiddenSessionOnlyCount).toBe(1)
+    })
+
+    it('stays hidden under a project filter, unlike the project rule', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'keep-1', projectDir: '-dir-a', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'drop-me', projectDir: '-dir-a', projectName: 'alpha' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { 'drop-me': { hidden: true } },
+        projects: {},
+      }
+
+      const result = await paginateAndFilterSessions(
+        sessions,
+        { ...baseInput, project: '-dir-a' },
+        metadata,
+      )
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['keep-1'])
+    })
+
+    it('stays hidden while active, unlike the project rule', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'keep-1', projectDir: '-dir-a', projectName: 'alpha' }),
+        createMockSession({
+          sessionId: 'drop-me',
+          projectDir: '-dir-a',
+          projectName: 'alpha',
+          isActive: true,
+          sessionState: 'working',
+        }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { 'drop-me': { hidden: true } },
+        projects: {},
+      }
+
+      const result = await paginateAndFilterSessions(sessions, baseInput, metadata)
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['keep-1'])
+    })
+
+    it('hiding a project does not hide its sessions individually', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'p1', projectDir: '-dir-hidden', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'p2', projectDir: '-dir-hidden', projectName: 'alpha' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: {},
+        projects: { '-dir-hidden': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(sessions, baseInput, metadata)
+
+      expect(result.sessions).toHaveLength(0)
+      expect(result.hiddenSessionCount).toBe(2)
+      // The per-session bucket stays empty: no session entry was ever written.
+      expect(result.hiddenSessionOnlyCount).toBe(0)
+      expect(result.hiddenSessions).toEqual([])
+    })
+
+    it('never double counts a hidden session that also lives in a hidden project', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'both', projectDir: '-dir-hidden', projectName: 'alpha' }),
+        createMockSession({ sessionId: 'solo', projectDir: '-dir-a', projectName: 'beta' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { both: { hidden: true }, solo: { hidden: true } },
+        projects: { '-dir-hidden': { hidden: true } },
+      }
+
+      const result = await paginateAndFilterSessions(sessions, baseInput, metadata)
+
+      expect(result.hiddenSessionCount).toBe(1)
+      expect(result.hiddenSessionOnlyCount).toBe(1)
+      expect(result.hiddenSessions.map((s) => s.sessionId)).toEqual(['solo'])
+    })
+  })
+
   describe('hidden project summary + showHidden', () => {
     const metadata: Metadata = {
       version: 2,

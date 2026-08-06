@@ -61,8 +61,10 @@ vi.mock('@/features/metadata/metadata.queries', () => ({
 }))
 
 const hideProjectMutate = vi.fn()
+const hideSessionMutate = vi.fn()
 vi.mock('@/features/metadata/useMetadataMutations', () => ({
   useHideProject: () => ({ mutate: hideProjectMutate }),
+  useHideSession: () => ({ mutate: hideSessionMutate }),
 }))
 
 const rescanMutate = vi.fn()
@@ -140,6 +142,8 @@ function result(over: Partial<PaginatedSessionsResult> = {}): PaginatedSessionsR
     projectDirs: ['C--Users-dev--work-rewind-dashboard'],
     hiddenProjects: [],
     hiddenSessionCount: 0,
+    hiddenSessions: [],
+    hiddenSessionOnlyCount: 0,
     ...over,
   }
 }
@@ -158,6 +162,7 @@ beforeEach(() => {
   navigateMock.mockReset()
   rescanMutate.mockReset()
   hideProjectMutate.mockReset()
+  hideSessionMutate.mockReset()
   localStorage.clear()
   Object.assign(searchState, {
     page: 1,
@@ -207,6 +212,68 @@ describe('SessionList empty states', () => {
     const call = navigateMock.mock.calls.at(-1)![0]
     expect(call.to).toBe('/sessions')
     expect(call.search({ ...searchState })).toMatchObject({ showHidden: true, page: 1 })
+  })
+
+  it('offers a Show-hidden action when every session was hidden one by one', async () => {
+    paginatedResult = async () =>
+      result({
+        sessions: [],
+        totalCount: 0,
+        hiddenSessionCount: 0,
+        hiddenProjects: [],
+        hiddenSessionOnlyCount: 2,
+        hiddenSessions: [
+          { sessionId: 's1', projectName: 'rewind-dashboard', claudeName: null, firstUserMessage: 'hello' },
+          { sessionId: 's2', projectName: 'rewind-dashboard', claudeName: null, firstUserMessage: 'bye' },
+        ],
+      })
+
+    render(
+      <Wrapper>
+        <SessionList />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Every session is hidden')).toBeTruthy()
+    })
+    expect(screen.getByText('All 2 sessions were hidden one by one.')).toBeTruthy()
+    expect(screen.getByText('2 sessions hidden one by one')).toBeTruthy()
+  })
+
+  it('counts project-hidden and individually hidden sessions separately in the banner', async () => {
+    paginatedResult = async () =>
+      result({
+        hiddenSessionCount: 6,
+        hiddenProjects: [
+          { projectDir: 'dir-a', projectName: 'rewind-dashboard', sessionCount: 6 },
+        ],
+        hiddenSessionOnlyCount: 1,
+        hiddenSessions: [
+          { sessionId: 'z9', projectName: 'other', claudeName: 'named one', firstUserMessage: null },
+        ],
+      })
+
+    render(
+      <Wrapper>
+        <SessionList />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('6 sessions in 1 hidden project, plus 1 session hidden one by one'),
+      ).toBeTruthy()
+    })
+
+    act(() => {
+      screen.getByRole('button', { name: /list/i }).click()
+    })
+
+    const unhideButtons = screen.getAllByRole('button', { name: /^unhide$/i })
+    expect(unhideButtons).toHaveLength(2)
+    unhideButtons[1].click()
+    expect(hideSessionMutate).toHaveBeenCalledWith({ sessionId: 'z9', hidden: false })
   })
 
   it('offers a Rescan action when nothing exists at all', async () => {

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   pinSession,
+  hideSession,
   renameSession,
   pinProject,
   hideProject,
@@ -21,6 +22,15 @@ export function usePinSession() {
   return useMutation({
     mutationFn: (args: { sessionId: string; pinned: boolean }) =>
       pinSession({ data: args }),
+    onSuccess: invalidate,
+  })
+}
+
+export function useHideSession() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (args: { sessionId: string; hidden: boolean }) =>
+      hideSession({ data: args }),
     onSuccess: invalidate,
   })
 }

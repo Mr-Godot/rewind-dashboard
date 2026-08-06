@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const SessionMetadataEntrySchema = z.object({
   pinned: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   customName: z.string().optional(),
 })
 

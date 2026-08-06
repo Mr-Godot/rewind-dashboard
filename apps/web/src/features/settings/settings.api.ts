@@ -4,6 +4,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getDashboardDir } from '@/lib/utils/claude-path'
 import {
   SettingsSchema,
+  SettingsWriteSchema,
   DEFAULT_SETTINGS,
   type Settings,
 } from './settings.types'
@@ -43,7 +44,7 @@ export const getSettings = createServerFn({ method: 'GET' }).handler(
 
 export const saveSettings = createServerFn({ method: 'POST' })
   .inputValidator((input: Settings) => {
-    const result = SettingsSchema.parse(input)
+    const result = SettingsWriteSchema.parse(input)
     return result
   })
   .handler(async ({ data }): Promise<Settings> => {

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeModelId, SettingsSchema } from './settings.types'
+import {
+  buildTerminalProfiles,
+  normalizeModelId,
+  SettingsSchema,
+  SettingsWriteSchema,
+  type Settings,
+} from './settings.types'
 
 describe('normalizeModelId', () => {
   it('strips date suffix from model ID', () => {
@@ -42,6 +48,7 @@ describe('SettingsSchema', () => {
       version: 1,
       subscriptionTier: 'pro',
       pricingOverrides: {},
+      terminalProfiles: {},
       updatedAt: '2025-01-01T00:00:00Z',
     }
 
@@ -167,6 +174,72 @@ describe('SettingsSchema', () => {
     expect(invalidResult.success).toBe(false)
   })
 
+  it('parses a settings.json written before terminalProfiles existed', () => {
+    const result = SettingsSchema.safeParse({
+      version: 1,
+      subscriptionTier: 'pro',
+      pricingOverrides: {},
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.terminalProfiles).toEqual({})
+      expect(result.data.terminalProfiles.win32).toBeUndefined()
+    }
+  })
+
+  it("accepts the literal 'auto', which is distinguishable from absent", () => {
+    const result = SettingsSchema.safeParse({
+      version: 1,
+      terminalProfiles: { win32: 'auto' },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.terminalProfiles.win32).toBe('auto')
+      expect(result.data.terminalProfiles.darwin).toBeUndefined()
+    }
+  })
+
+  it('degrades one corrupt platform key to absent and preserves everything else', () => {
+    const result = SettingsSchema.safeParse({
+      version: 1,
+      subscriptionTier: 'max-20x',
+      pricingOverrides: {
+        'claude-sonnet-4': {
+          inputPerMTok: 1,
+          outputPerMTok: 2,
+          cacheReadPerMTok: 3,
+          cacheWritePerMTok: 4,
+        },
+      },
+      terminalProfiles: { win32: 'not-a-real-id', darwin: 'iterm2' },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.terminalProfiles.win32).toBeUndefined()
+      expect(result.data.terminalProfiles.darwin).toBe('iterm2')
+      expect(result.data.subscriptionTier).toBe('max-20x')
+      expect(result.data.pricingOverrides['claude-sonnet-4'].inputPerMTok).toBe(1)
+    }
+  })
+
+  it('rejects a hostile terminal id on the write path', () => {
+    for (const hostile of ['C:\\Users\\Public\\evil.exe', 'cmd; calc.exe', '__proto__', 'wt-pwsh --profile evil']) {
+      expect(() =>
+        SettingsWriteSchema.parse({
+          version: 1,
+          terminalProfiles: { win32: hostile },
+        }),
+      ).toThrow()
+    }
+  })
+
+  it('accepts a legitimate id on the write path', () => {
+    expect(
+      SettingsWriteSchema.parse({ version: 1, terminalProfiles: { win32: 'wt-pwsh' } })
+        .terminalProfiles.win32,
+    ).toBe('wt-pwsh')
+  })
+
   it('requires version to be exactly 1', () => {
     const input = {
       version: 2,
@@ -176,5 +249,41 @@ describe('SettingsSchema', () => {
 
     const result = SettingsSchema.safeParse(input)
     expect(result.success).toBe(false)
+  })
+})
+
+describe('buildTerminalProfiles', () => {
+  const base: Settings = {
+    version: 1,
+    subscriptionTier: 'pro',
+    pricingOverrides: {},
+    terminalProfiles: { win32: 'git-bash', darwin: 'iterm2' },
+  }
+
+  it('preserves terminalProfiles when an unrelated setting is saved', () => {
+    expect(buildTerminalProfiles(base, 'win32', null)).toEqual({
+      win32: 'git-bash',
+      darwin: 'iterm2',
+    })
+  })
+
+  it('preserves terminalProfiles when detection has not resolved yet', () => {
+    expect(buildTerminalProfiles(base, undefined, { value: 'cmd' })).toEqual({
+      win32: 'git-bash',
+      darwin: 'iterm2',
+    })
+  })
+
+  it('writes only the current platform key', () => {
+    expect(buildTerminalProfiles(base, 'win32', { value: 'auto' })).toEqual({
+      win32: 'auto',
+      darwin: 'iterm2',
+    })
+  })
+
+  it('deletes the platform key for ask-me-again, leaving other platforms alone', () => {
+    const result = buildTerminalProfiles(base, 'win32', { value: undefined })
+    expect('win32' in result).toBe(false)
+    expect(result.darwin).toBe('iterm2')
   })
 })

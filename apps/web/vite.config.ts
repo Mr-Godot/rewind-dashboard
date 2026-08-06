@@ -3,12 +3,21 @@ import tsConfigPaths from 'vite-tsconfig-paths'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { spawn, execSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { homedir, tmpdir, platform } from 'node:os'
 import { join } from 'node:path'
 import { writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { resolveLaunchTarget } from './src/lib/launch/launch-session'
-import { buildLaunchScript, buildPowerShellArgs, resolvePowerShellExe } from './src/lib/launch/powershell-launch'
+import { buildScript, SCRIPT_EXTENSIONS } from './src/lib/launch/terminal-registry'
+import { detectTerminalsSync, getResolvedLauncher } from './src/lib/launch/terminal-detect'
+import { readTerminalPreferenceSync, resolveRecipe } from './src/lib/launch/terminal-preference'
+import type { TerminalPlatform } from './src/lib/launch/terminal-ids'
+
+function currentTerminalPlatform(): TerminalPlatform {
+  const p = platform()
+  if (p === 'win32' || p === 'darwin') return p
+  return 'linux'
+}
 
 function launchSessionPlugin(): Plugin {
   return {
@@ -24,9 +33,10 @@ function launchSessionPlugin(): Plugin {
         req.on('data', (c: Buffer) => chunks.push(c))
         req.on('end', () => {
           try {
+            const body = JSON.parse(Buffer.concat(chunks).toString())
             // All validation, the session-dir lookup and the dead-cwd guard live
             // in one tested module. A non-ok decision spawns NOTHING.
-            const target = resolveLaunchTarget(JSON.parse(Buffer.concat(chunks).toString()), homedir())
+            const target = resolveLaunchTarget(body, homedir())
             if (!target.ok) {
               res.writeHead(target.status, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ error: target.error }))
@@ -34,79 +44,61 @@ function launchSessionPlugin(): Plugin {
             }
             const { sessionId, sessionCwd } = target
 
-            const resumeCmd = `claude --resume ${sessionId} --dangerously-skip-permissions`
-            const isWin = platform() === 'win32'
-            let child
-            if (isWin) {
-              const idPrefix = sessionId.slice(0, 8)
-              // Window title makes the spawned terminal auditable — users can see
-              // it belongs to Rewind instead of mistaking it for malware.
-              const windowTitle = `Rewind Session ${idPrefix}`
-              const ps1Path = join(tmpdir(), `launch-session-${idPrefix}.ps1`)
-              // The .ps1 self-deletes on its last line, which works even if the
-              // Vite dev server has already shut down (the 60s setTimeout below is
-              // a belt-and-suspenders fallback for edge cases where the user kills
-              // the window before the claude process starts).
-              writeFileSync(ps1Path, buildLaunchScript({ sessionId, sessionCwd, windowTitle }))
-              // `start` is only a launcher: it opens a NEW VISIBLE console hosting
-              // PowerShell and exits immediately, so claude itself runs under
-              // PowerShell. Its first quoted argument is the window title, which
-              // labels the terminal during the brief moment before the .ps1 sets it.
-              child = spawn(
-                'cmd.exe',
-                ['/c', 'start', windowTitle, resolvePowerShellExe(), ...buildPowerShellArgs(ps1Path)],
-                { detached: true, stdio: 'ignore' },
-              )
-              child.unref()
-              setTimeout(() => { try { unlinkSync(ps1Path) } catch {} }, 60000)
-            } else if (platform() === 'darwin') {
-              // macOS: write a .command script and open it in the user's default
-              // terminal. Avoids hand-rolled osascript escaping (which broke cwd
-              // paths containing spaces) and the AppleScript automation prompt.
-              // `-l` login shell + `exec "$SHELL"` load the user's PATH (so
-              // `claude` resolves) and keep the window open after exit.
-              const cmdPath = join(tmpdir(), `launch-session-${sessionId.slice(0, 8)}.command`)
-              const lines = [
-                '#!/bin/bash -l',
-                `cd "${sessionCwd}"`,
-                resumeCmd,
-                'exec "$SHELL"',
-                '',
-              ]
-              writeFileSync(cmdPath, lines.join('\n'))
-              chmodSync(cmdPath, 0o755)
-              spawn('open', [cmdPath], { detached: true, stdio: 'ignore' }).unref()
-              setTimeout(() => { try { unlinkSync(cmdPath) } catch {} }, 60000)
-            } else {
-              // Linux: write a shell script that sources profile for PATH
-              const shPath = join(tmpdir(), `launch-session-${sessionId.slice(0,8)}.sh`)
-              const lines = [
-                '#!/usr/bin/env bash',
-                '[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"',
-                '[ -f "$HOME/.profile" ] && source "$HOME/.profile"',
-                `cd "${sessionCwd}"`,
-                resumeCmd,
-                'exec bash',
-                '',
-              ]
-              writeFileSync(shPath, lines.join('\n'))
-              chmodSync(shPath, 0o755)
-              // Find a terminal emulator (use execSync from top-level import)
-              let term = 'xterm'
-              for (const t of ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal']) {
-                try {
-                  if (execSync(`command -v ${t} 2>/dev/null`).toString().trim()) { term = t; break }
-                } catch (_) { /* not found, try next */ }
-              }
-              if (term === 'gnome-terminal') {
-                spawn(term, ['--', shPath], { detached: true, stdio: 'ignore' }).unref()
-              } else {
-                spawn(term, ['-e', shPath], { detached: true, stdio: 'ignore' }).unref()
-              }
-              setTimeout(() => { try { unlinkSync(shPath) } catch {} }, 60000)
+            // Which terminal: an allowlisted ID from the body, else the saved
+            // preference read fresh off disk. With no preference the answer is
+            // 428, never a guess, so no request can obtain a defaulted spawn.
+            const termPlatform = currentTerminalPlatform()
+            const detection = detectTerminalsSync()
+            const decision = resolveRecipe({
+              bodyTerminalId: (body ?? {}).terminalId,
+              saved: readTerminalPreferenceSync(termPlatform),
+              detectedIds: detection.detected.map((d) => d.id),
+              platform: termPlatform,
+            })
+            if (!decision.ok) {
+              res.writeHead(decision.status, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: decision.error }))
+              return
             }
+
+            const { recipe } = decision
+            const idPrefix = sessionId.slice(0, 8)
+            // Window title makes the spawned terminal auditable: users can see
+            // it belongs to Rewind instead of mistaking it for malware.
+            const windowTitle = `Rewind Session ${idPrefix}`
+            const scriptPath = join(
+              tmpdir(),
+              `launch-session-${idPrefix}${SCRIPT_EXTENSIONS[recipe.scriptFlavor]}`,
+            )
+            // The script self-deletes where the flavor allows it, which works
+            // even if the Vite dev server has already shut down. The 60s
+            // setTimeout below is a fallback for the cases where it cannot.
+            writeFileSync(scriptPath, buildScript(recipe.scriptFlavor, { sessionId, sessionCwd, windowTitle }))
+            if (platform() !== 'win32') chmodSync(scriptPath, 0o755)
+
+            // Launcher paths discovered by a file probe (Git Bash) live only in
+            // the detection cache, never in settings.json.
+            const launcherPath = recipe.launcher ?? getResolvedLauncher(recipe.id)
+            if (!launcherPath) {
+              res.writeHead(503, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Terminal launcher could not be located' }))
+              return
+            }
+
+            spawn(launcherPath, recipe.argv({ scriptPath, sessionCwd, windowTitle, launcherPath }), {
+              detached: true,
+              stdio: 'ignore',
+            }).unref()
+            setTimeout(() => { try { unlinkSync(scriptPath) } catch {} }, 60000)
+
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ ok: true }))
+            res.end(
+              JSON.stringify(
+                decision.warning
+                  ? { ok: true, warning: decision.warning, missing: decision.missing }
+                  : { ok: true },
+              ),
+            )
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : 'Bad request'
             console.error('[launch-session] Error:', message)
@@ -121,7 +113,7 @@ function launchSessionPlugin(): Plugin {
 
 export default defineConfig(({ command, mode }) => {
   // Production builds must use React's production JSX transform. @vitejs/plugin-react
-  // keys its dev-vs-prod JSX runtime on process.env.NODE_ENV — if it is unset OR
+  // keys its dev-vs-prod JSX runtime on process.env.NODE_ENV. If it is unset OR
   // inherited as "development" from the shell, the SSR bundle emits `jsxDEV` and the
   // built server crashes at runtime ("jsxDEV is not a function"). `vite build` is a
   // production build by default, so force NODE_ENV=production for any non-development

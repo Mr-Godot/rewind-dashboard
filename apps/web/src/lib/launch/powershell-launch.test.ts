@@ -3,30 +3,9 @@ import {
   buildLaunchScript,
   buildPowerShellArgs,
   escapeSingleQuoted,
-  resolvePowerShellExe,
 } from './powershell-launch'
 
 const SESSION_ID = 'bb968dcf-5394-47a8-abc6-822ee9254871'
-
-describe('resolvePowerShellExe', () => {
-  it('prefers pwsh.exe when PowerShell 7 is on PATH', () => {
-    expect(resolvePowerShellExe(() => true)).toBe('pwsh.exe')
-  })
-
-  it('falls back to powershell.exe when pwsh is absent', () => {
-    expect(resolvePowerShellExe(() => false)).toBe('powershell.exe')
-  })
-
-  it('only probes for pwsh.exe', () => {
-    const probed: string[] = []
-    resolvePowerShellExe((exe) => {
-      probed.push(exe)
-      return false
-    })
-
-    expect(probed).toEqual(['pwsh.exe'])
-  })
-})
 
 describe('buildPowerShellArgs', () => {
   it('keeps the window open, bypasses execution policy and runs the script file', () => {

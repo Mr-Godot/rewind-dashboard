@@ -210,6 +210,7 @@ describe('getMergedPricing', () => {
     const settings: Settings = {
       version: 1,
       subscriptionTier: 'pro',
+      terminalProfiles: {},
       pricingOverrides: {
         'claude-sonnet-4': {
           inputPerMTok: 5.0,
@@ -257,6 +258,7 @@ describe('getMergedPricing', () => {
     const settings: Settings = {
       version: 1,
       subscriptionTier: 'pro',
+      terminalProfiles: {},
       pricingOverrides: overrides,
     }
 

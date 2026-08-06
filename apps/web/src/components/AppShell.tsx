@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
 import { ActiveSessionsBadge } from '@/features/sessions/ActiveSessionsBadge'
 import { appInfoQuery } from '@/features/settings/app-info.queries'
+import { terminalsQuery } from '@/features/terminal/terminal.queries'
 
 const NAV_ITEMS = [
   {
@@ -52,6 +53,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const matches = useMatches()
   const currentPath = matches[matches.length - 1]?.pathname ?? ''
   const { data: appInfo } = useQuery(appInfoQuery)
+  // Warms the detection cache so the first-run dialog paints fully populated.
+  // Cheap, cacheable and side-effect free, so it costs nothing to prefetch.
+  useQuery(terminalsQuery)
 
   return (
     <div className="relative flex min-h-screen">

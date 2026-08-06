@@ -5,6 +5,7 @@ import {
   DEFAULT_SETTINGS,
   type Settings,
   type SubscriptionTierId,
+  buildTerminalProfiles,
   type ModelPricingOverride,
 } from './settings.types'
 import { TierSelector } from './TierSelector'
@@ -12,6 +13,9 @@ import { PricingTableEditor } from './PricingTableEditor'
 import { usePrivacy } from '@/features/privacy/PrivacyContext'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useRescan } from '@/features/sessions/rescan.queries'
+import { TerminalSelector } from '@/features/terminal/TerminalSelector'
+import { terminalsQuery, useRedetectTerminals } from '@/features/terminal/terminal.queries'
+import type { TerminalChoice } from '@/lib/launch/terminal-ids'
 
 export function SettingsPage() {
   const { data: settings, isLoading } = useQuery(settingsQuery)
@@ -28,16 +32,52 @@ export function SettingsPage() {
   return <SettingsForm settings={settings} />
 }
 
+function RedetectButton({ onClick, isPending }: { onClick: () => void; isPending: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isPending}
+      className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:border-gray-600 hover:text-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {isPending ? 'detecting…' : 're-detect'}
+    </button>
+  )
+}
+
 function SettingsForm({ settings }: { settings: Settings }) {
   const mutation = useSettingsMutation()
   const { privacyMode, togglePrivacyMode } = usePrivacy()
   const { theme, toggleTheme } = useTheme()
   const isDark = theme === 'dark'
   const rescan = useRescan()
+  const { data: terminals } = useQuery(terminalsQuery)
+  const redetect = useRedetectTerminals()
+  const platform = terminals?.platform
 
   const [tier, setTier] = useState<SubscriptionTierId>(settings.subscriptionTier)
   const [overrides, setOverrides] = useState<Record<string, ModelPricingOverride>>(settings.pricingOverrides)
+  // Boxed so that "the user cleared it" stays distinguishable from "the
+  // detection query has not resolved yet", which is the same absent-vs-auto
+  // distinction the whole feature turns on.
+  const [terminalEdit, setTerminalEdit] = useState<{ value: TerminalChoice | undefined } | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+
+  const terminal = terminalEdit
+    ? terminalEdit.value
+    : platform
+      ? settings.terminalProfiles[platform]
+      : undefined
+
+  function handleTerminalChange(choice: TerminalChoice) {
+    setTerminalEdit({ value: choice })
+    setIsDirty(true)
+  }
+
+  function handleAskAgain() {
+    setTerminalEdit({ value: undefined })
+    setIsDirty(true)
+  }
 
   function handleTierChange(newTier: SubscriptionTierId) {
     setTier(newTier)
@@ -52,18 +92,26 @@ function SettingsForm({ settings }: { settings: Settings }) {
   function handleReset() {
     setTier(DEFAULT_SETTINGS.subscriptionTier)
     setOverrides(DEFAULT_SETTINGS.pricingOverrides)
+    // Reset writes 'auto', it does not delete the key: clearing pricing
+    // overrides must not silently re-arm the first-run terminal prompt.
+    setTerminalEdit({ value: 'auto' })
     setIsDirty(true)
   }
 
   function handleSave() {
+    // Spread first: any field not named below (terminalProfiles, updatedAt)
+    // would otherwise be destroyed by an unrelated save.
     const updated: Settings = {
+      ...settings,
       version: 1,
       subscriptionTier: tier,
       pricingOverrides: overrides,
+      terminalProfiles: buildTerminalProfiles(settings, platform, terminalEdit),
     }
     mutation.mutate(updated, {
       onSuccess: () => {
         setIsDirty(false)
+        setTerminalEdit(null)
       },
     })
   }
@@ -193,6 +241,72 @@ function SettingsForm({ settings }: { settings: Settings }) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Terminal */}
+      <div className="mt-6">
+        <h2 className="text-sm font-semibold text-gray-300">Terminal</h2>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Choose which terminal the Launch button opens. Only terminals detected on this
+          machine are listed.
+        </p>
+        <div className="mt-3 rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+          {!terminals ? (
+            <div className="h-20 animate-pulse rounded bg-gray-800/50" />
+          ) : terminals.detected.length === 0 ? (
+            <div className="flex items-start justify-between gap-4">
+              <p className="text-xs text-gray-400">
+                No supported terminal was detected on this machine. Launch is unavailable.
+                Install Windows Terminal or PowerShell 7, then re-detect.
+              </p>
+              <RedetectButton
+                onClick={() => redetect.mutate()}
+                isPending={redetect.isPending}
+              />
+            </div>
+          ) : (
+            <>
+              {terminal === undefined && (
+                <p className="mb-3 text-[11px] text-gray-400">
+                  You have not chosen a terminal yet. Rewind will ask the first time you
+                  launch a session, or you can choose now.
+                </p>
+              )}
+              <TerminalSelector
+                name="settings-terminal"
+                detected={terminals.detected}
+                autoResolvedId={terminals.autoResolvedId}
+                value={terminal}
+                onChange={handleTerminalChange}
+              />
+              <div className="mt-3 flex items-center justify-between border-t border-gray-800 pt-3">
+                <span className="text-[10px] text-gray-500">
+                  {terminals.detected.length} detected
+                </span>
+                <div className="flex items-center gap-3">
+                  {terminal !== undefined && (
+                    <button
+                      type="button"
+                      onClick={handleAskAgain}
+                      className="text-[10px] text-gray-500 transition-colors hover:text-gray-300"
+                    >
+                      ask me again next launch
+                    </button>
+                  )}
+                  <RedetectButton
+                    onClick={() => redetect.mutate()}
+                    isPending={redetect.isPending}
+                  />
+                </div>
+              </div>
+              {terminalEdit?.value === undefined && terminalEdit !== null && (
+                <p className="mt-2 text-[10px] text-gray-500">
+                  The terminal prompt will show on your next launch. Save to confirm.
+                </p>
+              )}
+            </>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,3 @@
-import { execSync } from 'node:child_process'
-
 /**
  * Builds the PowerShell invocation used to open a visible `claude --resume`
  * terminal on Windows. Pure and side-effect free apart from `defaultProbe`,
@@ -9,24 +7,6 @@ import { execSync } from 'node:child_process'
 /** Escape a value for embedding in a PowerShell single-quoted string. */
 export function escapeSingleQuoted(value: string): string {
   return value.replace(/'/g, "''")
-}
-
-/** True when the executable resolves on PATH. Never throws. */
-function defaultProbe(exe: string): boolean {
-  try {
-    execSync(`where.exe ${exe}`, { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * PowerShell 7 when it is installed, otherwise Windows PowerShell 5.1, which
- * ships with every supported Windows build and is therefore always present.
- */
-export function resolvePowerShellExe(probe: (exe: string) => boolean = defaultProbe): string {
-  return probe('pwsh.exe') ? 'pwsh.exe' : 'powershell.exe'
 }
 
 /**

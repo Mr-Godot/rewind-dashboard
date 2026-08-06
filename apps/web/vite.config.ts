@@ -8,6 +8,7 @@ import { homedir, tmpdir, platform } from 'node:os'
 import { join } from 'node:path'
 import { writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { resolveLaunchTarget } from './src/lib/launch/launch-session'
+import { buildLaunchScript, buildPowerShellArgs, resolvePowerShellExe } from './src/lib/launch/powershell-launch'
 
 function launchSessionPlugin(): Plugin {
   return {
@@ -37,32 +38,27 @@ function launchSessionPlugin(): Plugin {
             const isWin = platform() === 'win32'
             let child
             if (isWin) {
-              const safeCwd = sessionCwd.replace(/\//g, '\\')
               const idPrefix = sessionId.slice(0, 8)
               // Window title makes the spawned terminal auditable — users can see
               // it belongs to Rewind instead of mistaking it for malware.
               const windowTitle = `Rewind Session ${idPrefix}`
-              const batPath = join(tmpdir(), `launch-session-${idPrefix}.bat`)
-              // The .bat self-deletes on exit via `(goto) 2>nul & del "%~f0"`, which
-              // works even if the Vite dev server has already shut down (the 60s
-              // setTimeout below is a belt-and-suspenders fallback for edge cases
-              // where the user kills the window before the claude process starts).
-              const batLines = [
-                '@echo off',
-                `title ${windowTitle}`,
-                `cd /d "${safeCwd}"`,
-                resumeCmd,
-                'pause',
-                '(goto) 2>nul & del "%~f0"',
-                '',
-              ]
-              writeFileSync(batPath, batLines.join('\r\n'))
-              // First quoted argument to `start` is the window title — this ensures
-              // the terminal is labeled even during the brief moment before the
-              // .bat's own `title` command runs.
-              child = spawn('cmd.exe', ['/c', 'start', windowTitle, batPath], { detached: true, stdio: 'ignore' })
+              const ps1Path = join(tmpdir(), `launch-session-${idPrefix}.ps1`)
+              // The .ps1 self-deletes on its last line, which works even if the
+              // Vite dev server has already shut down (the 60s setTimeout below is
+              // a belt-and-suspenders fallback for edge cases where the user kills
+              // the window before the claude process starts).
+              writeFileSync(ps1Path, buildLaunchScript({ sessionId, sessionCwd, windowTitle }))
+              // `start` is only a launcher: it opens a NEW VISIBLE console hosting
+              // PowerShell and exits immediately, so claude itself runs under
+              // PowerShell. Its first quoted argument is the window title, which
+              // labels the terminal during the brief moment before the .ps1 sets it.
+              child = spawn(
+                'cmd.exe',
+                ['/c', 'start', windowTitle, resolvePowerShellExe(), ...buildPowerShellArgs(ps1Path)],
+                { detached: true, stdio: 'ignore' },
+              )
               child.unref()
-              setTimeout(() => { try { unlinkSync(batPath) } catch {} }, 60000)
+              setTimeout(() => { try { unlinkSync(ps1Path) } catch {} }, 60000)
             } else if (platform() === 'darwin') {
               // macOS: write a .command script and open it in the user's default
               // terminal. Avoids hand-rolled osascript escaping (which broke cwd

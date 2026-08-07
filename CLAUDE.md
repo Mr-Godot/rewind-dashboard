@@ -44,11 +44,11 @@ Agents cannot see each other's output. You are the bridge:
 
 For non-trivial work, ALWAYS use these skills instead of ad-hoc requests:
 
-- `/feature <STORY-ID>` — Full pipeline: architect → implement → review → qa → PR
-- `/fix-issue <number>` — Branch → implementer fix → reviewer check → PR
-- `/open-issue <description>` — product-owner creates structured GitHub issue
-- `/review` — Quality gates + reviewer agent
-- `/quality-check` — Typecheck, lint, test, build
+- `/feature <STORY-ID>`: Full pipeline: architect → implement → review → qa → PR
+- `/fix-issue <number>`: Branch → implementer fix → reviewer check → PR
+- `/open-issue <description>`: product-owner creates structured GitHub issue
+- `/review`: Quality gates + reviewer agent
+- `/quality-check`: Typecheck, lint, test, build
 
 When a user asks to "implement X" or "add feature Y" without using a skill, you should STILL follow the delegation rules above. Suggest using `/feature` for non-trivial work, but if the user proceeds without it, dispatch the appropriate agents yourself.
 
@@ -64,13 +64,21 @@ Read-only, local-only observability dashboard for Claude Code sessions. Scans `~
 
 ### Session Launch Flow (`apps/web/vite.config.ts`)
 
-The Launch button POSTs to `/api/launch-session`, handled by the `launchSessionPlugin` Vite middleware. It validates the UUID + cwd, reads the session's recorded `cwd` from `~/.claude/projects/**/<sessionId>.jsonl`, then spawns a **visible** terminal running `claude --resume <id> --dangerously-skip-permissions`. The terminal must be visible because the user interacts with Claude inside it.
+The Launch button POSTs to `/api/launch-session`, handled by the `launchSessionPlugin` Vite middleware. It rejects cross-origin requests, validates the UUID + cwd, reads the session's recorded `cwd` from `~/.claude/projects/**/<sessionId>.jsonl`, then spawns a **visible** terminal running `claude --resume <id> --dangerously-skip-permissions`. The terminal must be visible because the user interacts with Claude inside it.
 
-- **Windows**: writes a `.bat` to `%TEMP%`, spawns via `cmd.exe /c start "<title>" <batfile>`. The window title is `Rewind Session <id-prefix>` so users can identify it. The .bat self-deletes on exit via `(goto) 2>nul & del "%~f0"` (reliable even if Vite has died); a 60s `setTimeout` is a fallback.
-- **macOS**: `osascript` launches Terminal.app with `do script` (inherits shell environment).
-- **Linux**: writes a `.sh` that sources `~/.bashrc`/`~/.profile`, opens it in the first available terminal emulator (`x-terminal-emulator`, `gnome-terminal`, `konsole`, `xfce4-terminal`, `xterm`).
+Which terminal is used is a user preference, not a hardcoded per-platform branch:
 
-Security: the UUID regex and cwd sanitization (absolute path, no traversal, no shell metacharacters) gate all spawns — do not weaken.
+- `src/lib/launch/terminal-registry.ts` maps an allowlisted profile ID (`wt-pwsh`, `pwsh`, `git-bash`, `iterm2`, `gnome-terminal`, ...) to a fixed launcher and a fixed argv template. A profile is a complete launch recipe, so host/shell pairings like Windows Terminal + PowerShell 7 are enumerated as their own IDs rather than composed.
+- `src/lib/launch/terminal-detect.ts` probes which profiles exist, cached for the life of the server process.
+- `src/lib/launch/terminal-preference.ts` reads the choice from `terminalProfiles.<platform>` in `~/.claude-dashboard/settings.json`. An absent key means the user has never chosen and triggers the first-run dialog; `"auto"` means they explicitly chose automatic. These are different states, do not collapse them.
+- Scripts are written to `os.tmpdir()` and self-delete; a 60s `setTimeout` is a fallback.
+
+Security, do not weaken any of these:
+
+- The stored preference is an ID, never a path and never an argument. There is no free-text field in this feature. The registry lookup is a `Map` that rejects any miss, with no regex, trimming, case folding or whitespace splitting, so a hand-edited settings file degrades to asking the user rather than spawning.
+- `spawn(exe, argsArray)` only. No `shell: true`, no `execSync`, no template-string command lines in the launch path.
+- The UUID regex and cwd sanitization (absolute path, no traversal, no shell metacharacters) in `src/lib/launch/launch-session.ts` gate all spawns.
+- `src/lib/launch/request-origin.ts` validates `Origin` against the request's own `Host` before any body is read. Do not hardcode the port: it varies (3030 in use, 3000 default, 3001 under e2e).
 
 ## Tech Stack & Commands
 
@@ -79,29 +87,30 @@ TanStack Start (SSR on Vite), TanStack Router (file-based), TanStack React Query
 ```bash
 cd apps/web
 npm run dev          # Dev server on localhost:3030
-npm run build        # Production build (known issue on Node v24 — use dev mode)
+npm run build        # Production build (known issue on Node v24, use dev mode)
 npm run typecheck    # TypeScript checking
 npm run test         # Vitest unit tests
-npm run lint         # ESLint (no Prettier — ESLint only)
+npm run lint         # ESLint (no Prettier, ESLint only)
 npm run e2e          # Playwright E2E (port 3001, fixtures at e2e/fixtures/.claude)
 ```
 
 ## Architecture (brief)
 
 - **Data flow:** `~/.claude/**` → Scanner → Parsers → Server Functions (`createServerFn`) → React Query → UI
-- **Structure:** Vertical Slice Architecture — `features/` (sessions, session-detail, stats), `lib/` (scanner, parsers, utils), `routes/` (file-based under `_dashboard`)
+- **Structure:** Vertical Slice Architecture. `features/` (sessions, session-detail, stats), `lib/` (scanner, parsers, utils), `routes/` (file-based under `_dashboard`)
 - **Pattern:** `*.server.ts` → `*.queries.ts` → components via `useQuery`
-- No database — filesystem reads with in-memory mtime caches
+- No database, filesystem reads with in-memory mtime caches
 
 ## Conventions
 
-- Vertical Slice Architecture — organize by feature, not by layer
+- Vertical Slice Architecture: organize by feature, not by layer
 - Import alias: `@/` → `apps/web/src/`
 - Branch naming: `feature/<STORY-ID>-description`
-- Dark theme: `bg-gray-950` body, `border-gray-800` borders — see `uiux` skill for full design system
+- Dark theme: `bg-gray-950` body, `border-gray-800` borders. See `uiux` skill for full design system
 - Tailwind v4 (CSS-first config)
-- ESLint only — no Prettier or formatter configured
-- Architecture boundary tests in `src/__tests__/architecture/` enforce cross-slice import rules in CI
+- ESLint only, no Prettier or formatter configured
+- Cross-slice imports go through a feature's public surface (`*.api.ts`, `*.queries.ts`), not into its internals. This is a convention, not machine-enforced: CI runs typecheck, vitest, lint and build only
+- Modules reachable from `vite.config.ts` must use relative imports, not `@/`. Vite bundles its config with esbuild before `vite-tsconfig-paths` applies, so an alias there breaks the dev server
 - Quality gates before PR: typecheck, lint, test, build (all must pass)
 - Never push directly to main
 - Do NOT add `Co-Authored-By` trailers to commit messages

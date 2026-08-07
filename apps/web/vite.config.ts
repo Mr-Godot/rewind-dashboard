@@ -8,6 +8,7 @@ import { homedir, tmpdir, platform } from 'node:os'
 import { join } from 'node:path'
 import { writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { resolveLaunchTarget } from './src/lib/launch/launch-session'
+import { validateRequestOrigin } from './src/lib/launch/request-origin'
 import { buildScript, SCRIPT_EXTENSIONS } from './src/lib/launch/terminal-registry'
 import { detectTerminalsSync, getResolvedLauncher } from './src/lib/launch/terminal-detect'
 import { readTerminalPreferenceSync, resolveRecipe } from './src/lib/launch/terminal-preference'
@@ -27,6 +28,14 @@ function launchSessionPlugin(): Plugin {
         if (req.method !== 'POST') {
           res.writeHead(405)
           res.end('Method not allowed')
+          return
+        }
+        // Gate before a single byte of body is read: a rejected caller must
+        // reach no parsing and no filesystem lookup.
+        const originCheck = validateRequestOrigin(req.headers)
+        if (!originCheck.ok) {
+          res.writeHead(originCheck.status, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: originCheck.error }))
           return
         }
         const chunks: Buffer[] = []

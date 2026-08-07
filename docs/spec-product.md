@@ -1,6 +1,6 @@
 # Claude Code Session Dashboard
 
-> Observability dashboard for Claude Code execution — visualizes active sessions and running tasks by analyzing `~/.claude`.
+> Observability dashboard for Claude Code execution, visualizes active sessions and running tasks by analyzing `~/.claude`.
 
 ## Objective
 
@@ -68,6 +68,24 @@ The application must:
 - Filter by agent
 - Filter by skill
 - Search by session ID
+- Search by session name, tolerant of punctuation and word separators
+- Search covers hidden sessions and sessions in hidden projects; hidden results are labelled rather than removed
+- Results are ordered name matches first, most recent first within each group
+
+### 6. Hiding
+
+- Hide a single session, independently of its project
+- Hide a whole project, independently of its individual sessions
+- The two counts are reported separately and never overlap
+- Both are reversible in one click
+
+### 7. Session Launching
+
+- Resume a session in a real terminal window running `claude --resume`
+- The terminal application is the user's choice, asked once on first use and never guessed
+- Only terminals detected on the host are offered; the stored preference is an allowlisted identifier, never a path or an argument
+- The preference is stored per platform
+- The launch endpoint accepts same-origin requests from a loopback host only
 
 ## Architectural Requirements
 

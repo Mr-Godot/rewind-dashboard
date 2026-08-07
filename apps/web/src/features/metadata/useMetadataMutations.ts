@@ -36,11 +36,16 @@ export function useHideSession() {
 }
 
 export function useRenameSession() {
+  const queryClient = useQueryClient()
   const invalidate = useInvalidateAll()
   return useMutation({
     mutationFn: (args: { sessionId: string; customName: string }) =>
       renameSession({ data: args }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      // The conversation panel indexes the name too, so it must re-query.
+      queryClient.invalidateQueries({ queryKey: ['fts'] })
+    },
   })
 }
 

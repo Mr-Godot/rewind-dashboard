@@ -3,7 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider, keepPreviousData } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import type { SessionSummary } from '@/lib/parsers/types'
-import type { PaginatedSessionsResult } from './sessions.api'
+import type { PaginatedSessionsResult, SessionListItem } from './sessions.api'
 import { STORAGE_KEY } from './useSessionFilterPreferences'
 
 // --- Mocks -----------------------------------------------------------------
@@ -90,8 +90,10 @@ vi.mock('./FullTextSearchResults', () => ({
   MIN_FTS_QUERY_LENGTH: 3,
 }))
 vi.mock('./SessionCard', () => ({
-  SessionCard: ({ session }: { session: SessionSummary }) => (
-    <div data-testid="session-card">{session.sessionId}</div>
+  SessionCard: ({ session }: { session: SessionListItem }) => (
+    <div data-testid="session-card" data-hidden-reason={session.hiddenReason ?? ''}>
+      {session.sessionId}
+    </div>
   ),
 }))
 vi.mock('./usePageSizePreference', () => ({
@@ -144,6 +146,7 @@ function result(over: Partial<PaginatedSessionsResult> = {}): PaginatedSessionsR
     hiddenSessionCount: 0,
     hiddenSessions: [],
     hiddenSessionOnlyCount: 0,
+    hiddenMatchCount: 0,
     ...over,
   }
 }
@@ -478,5 +481,42 @@ describe('SessionList busy affordance', () => {
       expect(screen.getByText('No sessions match your filters')).toBeTruthy()
     })
     expect(screen.queryByTestId('session-list-busy')).toBeNull()
+  })
+
+  describe('matches revealed from behind the hidden flags', () => {
+    it('passes hiddenReason through to the card and announces the count', async () => {
+      searchState.search = 'orbit crm'
+      const revealed: SessionListItem = { ...session('fee51982'), hiddenReason: 'project' }
+      paginatedResult = async () =>
+        result({ sessions: [revealed], totalCount: 1, hiddenMatchCount: 1 })
+
+      render(
+        <Wrapper>
+          <SessionList />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('hidden-match-notice')).toBeTruthy()
+      })
+      expect(screen.getByTestId('hidden-match-notice').textContent).toContain('1 of these matches')
+      expect(screen.getByTestId('session-card').getAttribute('data-hidden-reason')).toBe('project')
+    })
+
+    it('stays silent when nothing was revealed', async () => {
+      searchState.search = 'orbit crm'
+      paginatedResult = async () => result({ hiddenMatchCount: 0 })
+
+      render(
+        <Wrapper>
+          <SessionList />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('session-card')).toHaveLength(3)
+      })
+      expect(screen.queryByTestId('hidden-match-notice')).toBeNull()
+    })
   })
 })

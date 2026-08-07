@@ -18,11 +18,11 @@ export function countWorkingSessions(live: LiveSessionState[]): number {
  * unresolved poll must leave the scan's own state untouched instead of
  * blanking every row.
  */
-export function mergeLiveStates(
-  sessions: SessionSummary[],
+export function mergeLiveStates<T extends SessionSummary>(
+  sessions: T[],
   live: LiveSessionState[],
   liveLoaded: boolean,
-): SessionSummary[] {
+): T[] {
   if (!liveLoaded) return sessions
   const byId = new Map(live.map((s) => [s.sessionId, s.sessionState]))
   return sessions.map((s) => {

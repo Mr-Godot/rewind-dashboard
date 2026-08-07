@@ -7,7 +7,7 @@
  * is an opt-in stub. The factory in ./index picks one at runtime.
  */
 
-export type BlockType = 'text' | 'tool_use' | 'tool_result' | 'thinking'
+export type BlockType = 'text' | 'tool_use' | 'tool_result' | 'thinking' | 'title'
 
 /**
  * A single search result. The first five fields are the original, stable shape
@@ -28,6 +28,10 @@ export interface SearchHit {
   blockType?: BlockType
   /** Number of matching blocks within the session (when grouped). */
   matchCount?: number
+  /** Resolved display title of the session (customName > claudeName > null). */
+  title?: string | null
+  /** True when the query matched the session's name, not only its body text. */
+  titleMatch?: boolean
 }
 
 export interface SearchQuery {

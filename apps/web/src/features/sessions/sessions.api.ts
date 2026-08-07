@@ -4,6 +4,7 @@ import { scanAllSessions, getLiveSessionStates } from '@/lib/scanner/session-sca
 import type { LiveSessionState, SessionSummary } from '@/lib/parsers/types'
 import { readMetadataMigrated } from '@/features/metadata/metadata.api'
 import type { Metadata } from '@/features/metadata/metadata.types'
+import { tokenizeQuery, rankSessionMatch, type NameRank } from '@/lib/search/name-match'
 
 export const getSessionList = createServerFn({ method: 'GET' }).handler(
   async () => {
@@ -46,8 +47,17 @@ export interface HiddenSessionSummary {
   firstUserMessage: string | null
 }
 
+export type HiddenReason = 'project' | 'session'
+
+export interface SessionListItem extends SessionSummary {
+  /** Why this row would normally be hidden, when a search revealed it anyway. */
+  hiddenReason?: HiddenReason
+  /** Match tier, present only when the result came from a search. */
+  matchRank?: NameRank
+}
+
 export interface PaginatedSessionsResult {
-  sessions: SessionSummary[]
+  sessions: SessionListItem[]
   totalCount: number
   totalPages: number
   page: number
@@ -60,6 +70,8 @@ export interface PaginatedSessionsResult {
   /** Sessions hidden one by one, excluding any that already live in a hidden project. */
   hiddenSessions: HiddenSessionSummary[]
   hiddenSessionOnlyCount: number
+  /** Matches that are only visible because a search suspended hiding. */
+  hiddenMatchCount: number
 }
 
 /**
@@ -126,41 +138,54 @@ export async function paginateAndFilterSessions(
   }
   const hiddenSessionOnlyCount = hiddenSessions.length
 
-  // Filter out sessions from hidden projects (unless showHidden)
-  if (!showHidden && hiddenProjectKeys.size > 0 && !project) {
-    allSessions = allSessions.filter((s) => s.isActive || !hiddenProjectKeys.has(s.projectDir))
-  }
-
-  // Filter out individually hidden sessions (unless showHidden). Unlike the
-  // project rule above this is absolute: it targets one exact session the user
+  // The set that survives hiding. Filter out sessions from hidden projects
+  // (unless showHidden), then individually hidden sessions. Unlike the project
+  // rule the session rule is absolute: it targets one exact session the user
   // deliberately hid, so neither a project filter nor liveness overrides it.
+  let visible = allSessions
+  if (!showHidden && hiddenProjectKeys.size > 0 && !project) {
+    visible = visible.filter((s) => s.isActive || !hiddenProjectKeys.has(s.projectDir))
+  }
   if (!showHidden && hiddenSessionKeys.size > 0) {
-    allSessions = allSessions.filter((s) => !hiddenSessionKeys.has(s.sessionId))
+    visible = visible.filter((s) => !hiddenSessionKeys.has(s.sessionId))
   }
 
   // Extract distinct project names from (non-hidden) set
   const projects = Array.from(
-    new Set(allSessions.map((s) => s.projectName)),
+    new Set(visible.map((s) => s.projectName)),
   ).sort()
-  const projectDirs = Array.from(new Set(allSessions.map((s) => s.projectDir))).sort()
+  const projectDirs = Array.from(new Set(visible.map((s) => s.projectDir))).sort()
 
-  // Apply filters
-  let filtered = allSessions
-
-  // Search filter
   const sessionMeta = metadata?.sessions ?? {}
-  if (search) {
-    const q = search.toLowerCase()
-    filtered = filtered.filter(
-      (s) =>
-        s.projectName.toLowerCase().includes(q) ||
-        s.branch?.toLowerCase().includes(q) ||
-        s.sessionId.toLowerCase().includes(q) ||
-        s.cwd?.toLowerCase().includes(q) ||
-        s.firstUserMessage?.toLowerCase().includes(q) ||
-        s.claudeName?.toLowerCase().includes(q) ||
-        sessionMeta[s.sessionId]?.customName?.toLowerCase().includes(q),
-    )
+
+  // Search runs against the FULL set, hiding only against the unsearched one. A
+  // typed query is the strongest statement of intent there is: a session the
+  // user is explicitly looking for must never be subtracted before the query is
+  // even applied.
+  const terms = tokenizeQuery(search)
+  const ranked = new Map<string, NameRank>()
+  let filtered: SessionSummary[]
+  if (terms.length > 0) {
+    filtered = allSessions.filter((s) => {
+      const rank = rankSessionMatch(
+        {
+          customName: sessionMeta[s.sessionId]?.customName,
+          claudeName: s.claudeName,
+          projectName: s.projectName,
+          projectDir: s.projectDir,
+          branch: s.branch,
+          cwd: s.cwd,
+          sessionId: s.sessionId,
+          firstUserMessage: s.firstUserMessage,
+        },
+        terms,
+      )
+      if (rank === null) return false
+      ranked.set(s.sessionId, rank)
+      return true
+    })
+  } else {
+    filtered = visible
   }
 
   // Status filter
@@ -211,6 +236,14 @@ export async function paginateAndFilterSessions(
       const bActive = b.isActive ? 1 : 0
       if (aActive !== bActive) return bActive - aActive
 
+      // A name match outranks a body match: a session with 802 turns can no
+      // longer bury the session whose name is exactly what was typed.
+      if (terms.length > 0) {
+        const aRank = ranked.get(a.sessionId) ?? 9
+        const bRank = ranked.get(b.sessionId) ?? 9
+        if (aRank !== bRank) return aRank - bRank
+      }
+
       if (starFirst) {
         const aPin = sessionMeta[a.sessionId]?.pinned ? 1 : 0
         const bPin = sessionMeta[b.sessionId]?.pinned ? 1 : 0
@@ -244,12 +277,28 @@ export async function paginateAndFilterSessions(
     })
   }
 
-  const totalCount = filtered.length
+  // Tag the rows a search pulled out from behind the hidden flags, so the card
+  // can say so instead of silently contradicting the hide.
+  let hiddenMatchCount = 0
+  let items: SessionListItem[] = filtered
+  if (terms.length > 0) {
+    items = filtered.map((s) => {
+      const hiddenReason: HiddenReason | undefined = hiddenSessionKeys.has(s.sessionId)
+        ? 'session'
+        : hiddenProjectKeys.has(s.projectDir)
+          ? 'project'
+          : undefined
+      if (hiddenReason) hiddenMatchCount++
+      return { ...s, hiddenReason, matchRank: ranked.get(s.sessionId) }
+    })
+  }
+
+  const totalCount = items.length
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const clampedPage = Math.min(Math.max(1, page), totalPages)
   const start = (clampedPage - 1) * pageSize
   const end = start + pageSize
-  const sessions = filtered.slice(start, end)
+  const sessions = items.slice(start, end)
 
   return {
     sessions,
@@ -263,6 +312,7 @@ export async function paginateAndFilterSessions(
     hiddenSessionCount,
     hiddenSessions,
     hiddenSessionOnlyCount,
+    hiddenMatchCount,
   }
 }
 

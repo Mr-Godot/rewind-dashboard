@@ -339,6 +339,55 @@ describe('FullTextSearchResults', () => {
     })
   })
 
+  describe('session name on the card', () => {
+    it('renders the resolved name as the primary line', async () => {
+      searchMock.mockResolvedValue(result([hit('fee51982', { title: 'orbit-crm-v2' })]))
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults query="orbit crm" existingIds={new Set()} />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('orbit-crm-v2')).toBeTruthy()
+      })
+    })
+
+    it('falls back to the id prefix when there is no name', async () => {
+      searchMock.mockResolvedValue(result([hit('fee5198212345', { title: null })]))
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults query="acme" existingIds={new Set()} />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Session fee51982')).toBeTruthy()
+      })
+    })
+
+    it('chips a name match and leaves body-only matches unchipped', async () => {
+      searchMock.mockResolvedValue(
+        result([
+          hit('s1', { title: 'agent-brain', titleMatch: true }),
+          hit('s2', { title: 'other', titleMatch: false }),
+        ]),
+      )
+
+      render(
+        <Wrapper>
+          <FullTextSearchResults query="brain" existingIds={new Set()} />
+        </Wrapper>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getAllByText('name match')).toHaveLength(1)
+      })
+    })
+  })
+
   it('stays idle (and issues no request) below the minimum query length', async () => {
     searchMock.mockResolvedValue(result([]))
 

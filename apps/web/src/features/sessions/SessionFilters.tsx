@@ -12,7 +12,7 @@ interface SessionFiltersProps {
 
 export function SessionFilters({ projects, activeCount, searchRef }: SessionFiltersProps) {
   const navigate = useNavigate()
-  const { search: urlSearch, status, project, sort, view, pageSize, starFirst } = Route.useSearch()
+  const { search: urlSearch, status, project, sort, view, starFirst } = Route.useSearch()
   const { privacyMode, anonymizeProjectName } = usePrivacy()
   const rescan = useRescan()
 
@@ -29,33 +29,49 @@ export function SessionFilters({ projects, activeCount, searchRef }: SessionFilt
     setLocalSearch(value)
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     debounceTimerRef.current = setTimeout(() => {
-      navigate({ to: '/sessions', search: { search: value, sort, view, status, project, page: 1, pageSize } })
+      // Spread `prev`: rebuilding the whole object dropped showHidden and
+      // starFirst on every keystroke, so the hidden toggle could not be held on
+      // while typing.
+      navigate({ to: '/sessions', search: (prev) => ({ ...prev, search: value, page: 1 }) })
     }, 300)
   }
 
   function handleStatusChange(newStatus: 'all' | 'active' | 'completed') {
     navigate({
       to: '/sessions',
-      search: { search: localSearch, sort, view, status: newStatus, page: 1, pageSize, project: newStatus === 'all' ? '' : project },
+      search: (prev) => ({
+        ...prev,
+        search: localSearch,
+        status: newStatus,
+        page: 1,
+        project: newStatus === 'all' ? '' : prev.project,
+      }),
     })
   }
 
   function handleProjectChange(newProject: string) {
-    navigate({ to: '/sessions', search: { search: localSearch, sort, view, status, project: newProject, page: 1, pageSize } })
+    navigate({
+      to: '/sessions',
+      search: (prev) => ({ ...prev, search: localSearch, project: newProject, page: 1 }),
+    })
   }
 
   function handleSortChange(newSort: string) {
-    navigate({ to: '/sessions', search: { search: localSearch, sort: newSort as typeof sort, view, status, project, page: 1, pageSize } })
+    navigate({
+      to: '/sessions',
+      search: (prev) => ({ ...prev, search: localSearch, sort: newSort as typeof sort, page: 1 }),
+    })
   }
 
   function handleViewChange(newView: string) {
     navigate({
       to: '/sessions',
-      search: {
-        search: localSearch, sort, status, project, page: 1,
+      search: (prev) => ({
+        ...prev,
+        search: localSearch,
         view: newView as 'flat' | 'grouped',
-        pageSize,
-      },
+        page: 1,
+      }),
     })
   }
 

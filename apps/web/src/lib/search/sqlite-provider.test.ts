@@ -8,9 +8,13 @@ const ctx = vi.hoisted(() => {
   const path = require('node:path') as typeof import('node:path')
   /* eslint-enable @typescript-eslint/no-require-imports */
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rewind-sqlite-'))
-  const projectsDir = path.join(root, 'projects')
+  // CLAUDE_HOME sits one level DOWN from root so getDashboardDir(), which
+  // resolves to the parent's .claude-dashboard, lands inside this test's own
+  // temp dir instead of a shared os.tmpdir()/.claude-dashboard.
+  const claudeHome = path.join(root, 'claude')
+  const projectsDir = path.join(claudeHome, 'projects')
   fs.mkdirSync(projectsDir, { recursive: true })
-  process.env.CLAUDE_HOME = root
+  process.env.CLAUDE_HOME = claudeHome
   return { root, projectsDir }
 })
 
@@ -52,6 +56,37 @@ function clearProjects(): void {
   }
 }
 
+/** getDashboardDir() derives from CLAUDE_HOME's PARENT, as claude-path documents. */
+function dashboardDir(): string {
+  return path.join(ctx.root, '.claude-dashboard')
+}
+
+function metadataFile(): string {
+  return path.join(dashboardDir(), 'session-metadata.json')
+}
+
+/** Write session-metadata.json with a strictly newer mtime than the last write. */
+let metadataClock = Date.now()
+function writeMetadata(sessions: Record<string, { customName?: string; hidden?: boolean }>): void {
+  fs.mkdirSync(dashboardDir(), { recursive: true })
+  fs.writeFileSync(
+    metadataFile(),
+    JSON.stringify({ version: 2, sessions, projects: {} }),
+    'utf-8',
+  )
+  metadataClock += 60_000
+  const stamp = new Date(metadataClock)
+  fs.utimesSync(metadataFile(), stamp, stamp)
+}
+
+function clearMetadata(): void {
+  try {
+    fs.rmSync(metadataFile(), { force: true })
+  } catch {
+    // never written in this run
+  }
+}
+
 beforeAll(() => {
   // Confirm the native driver is loadable; these tests require it.
   const probe = loadSqliteDriver(':memory:')
@@ -65,6 +100,7 @@ afterAll(() => {
 
 beforeEach(() => {
   clearProjects()
+  clearMetadata()
 })
 
 afterEach(() => {
@@ -489,6 +525,122 @@ describe('SqliteSearchProvider.search', () => {
   })
 })
 
+describe('session names in the index', () => {
+  it('finds a session whose transcript never contains its name', async () => {
+    writeSession('-Users-a-proj', 'sess-zeph', [userText('2026-01-01T00:00:00.000Z', 'nothing relevant here')])
+    writeMetadata({ 'sess-zeph': { customName: 'zephyr' } })
+
+    const provider = newProvider()
+    await provider.refresh()
+    const res = await provider.search({ query: 'zephyr' })
+
+    expect(res.hits.map((h) => h.sessionId)).toEqual(['sess-zeph'])
+    expect(res.hits[0].blockType).toBe('title')
+    expect(res.hits[0].titleMatch).toBe(true)
+    expect(res.hits[0].title).toBe('zephyr')
+  })
+
+  it('stamps the name row with the source file mtime, never an empty string', async () => {
+    const file = writeSession('-Users-a-proj', 'sess-ts', [userText('2026-01-01T00:00:00.000Z', 'body')])
+    writeMetadata({ 'sess-ts': { customName: 'tsname' } })
+
+    const provider = newProvider()
+    await provider.refresh()
+    const res = await provider.search({ query: 'tsname' })
+
+    expect(res.hits[0].timestamp).not.toBe('')
+    expect(res.hits[0].timestamp).toBe(new Date(fs.statSync(file).mtimeMs).toISOString())
+  })
+
+  it('surfaces a name match above 60 newer body-only matches inside a limit of 50', async () => {
+    const namedFile = writeSession('-Users-a-proj', 'sess-named', [
+      userText('2020-01-01T00:00:00.000Z', 'ancient body with no clue in it'),
+    ])
+    // The name row is stamped with the FILE mtime, so age it: otherwise this
+    // session would win on recency alone and the assertion would prove nothing.
+    const ancient = new Date('2020-01-01T00:00:00.000Z')
+    for (let i = 0; i < 60; i++) {
+      writeSession('-Users-a-proj', `sess-body-${String(i).padStart(2, '0')}`, [
+        userText(`2026-01-01T00:00:00.000Z`, 'discussing brainstorm ideas'),
+      ])
+    }
+    writeMetadata({ 'sess-named': { customName: 'agent-brain' } })
+    fs.utimesSync(namedFile, ancient, ancient)
+
+    const provider = newProvider()
+    await provider.refresh()
+    const res = await provider.search({ query: 'brain', limit: 50 })
+
+    expect(res.hits).toHaveLength(50)
+    expect(res.hits[0].sessionId).toBe('sess-named')
+    expect(res.hits[0].titleMatch).toBe(true)
+  })
+
+  it('picks up a rename with no force and no restart', async () => {
+    writeSession('-Users-a-proj', 'sess-ren', [userText('2026-01-01T00:00:00.000Z', 'plain body')])
+
+    const provider = newProvider()
+    await provider.refresh()
+    expect((await provider.search({ query: 'renamedthing' })).hits).toHaveLength(0)
+
+    // Only the metadata file changes: the JSONL mtime is untouched, so the
+    // incremental path would skip this session entirely without titles_mtime.
+    writeMetadata({ 'sess-ren': { customName: 'renamedthing' } })
+    const stats = await provider.refresh()
+    expect(stats.sessionsIndexed).toBe(0)
+    expect(stats.sessionsSkipped).toBe(1)
+
+    const res = await provider.search({ query: 'renamedthing' })
+    expect(res.hits.map((h) => h.sessionId)).toEqual(['sess-ren'])
+  })
+
+  it('backfills name rows additively, without reindexing unchanged files', async () => {
+    const dbPath = path.join(ctx.root, `idx-additive-${dbCounter++}.db`)
+    writeSession('-Users-a-proj', 'sess-add', [userText('2026-01-01T00:00:00.000Z', 'body only')])
+
+    const p1 = new SqliteSearchProvider({ dbPath, throttleMs: 0 })
+    await p1.refresh()
+    p1.close()
+
+    // Simulate a db written before name rows existed.
+    const raw = loadSqliteDriver(dbPath)!
+    raw.prepare("DELETE FROM blocks_src WHERE block_type = 'title'").run()
+    raw.prepare("DELETE FROM meta WHERE key = 'titles_mtime'").run()
+    const blocksBefore = (raw.prepare('SELECT COUNT(*) c FROM blocks_src').get() as { c: number }).c
+    raw.close()
+    expect(blocksBefore).toBeGreaterThan(0)
+
+    writeMetadata({ 'sess-add': { customName: 'backfilled' } })
+    const p2 = new SqliteSearchProvider({ dbPath, throttleMs: 0 })
+    openProviders.push(p2)
+    const stats = await p2.refresh()
+
+    // No full rebuild: the unchanged file was still skipped.
+    expect(stats.sessionsIndexed).toBe(0)
+    expect(stats.sessionsSkipped).toBe(1)
+    expect((await p2.search({ query: 'backfilled' })).hits.map((h) => h.sessionId)).toEqual([
+      'sess-add',
+    ])
+  })
+
+  it('drops the previous name when a session is renamed again', async () => {
+    writeSession('-Users-a-proj', 'sess-stale', [userText('2026-01-01T00:00:00.000Z', 'body')])
+    writeMetadata({ 'sess-stale': { customName: 'alphaname' } })
+
+    const provider = newProvider()
+    await provider.refresh()
+    expect((await provider.search({ query: 'alphaname' })).hits).toHaveLength(1)
+
+    writeMetadata({ 'sess-stale': { customName: 'betaname' } })
+    await provider.refresh()
+
+    expect((await provider.search({ query: 'alphaname' })).hits).toHaveLength(0)
+    expect((await provider.search({ query: 'betaname' })).hits.map((h) => h.sessionId)).toEqual([
+      'sess-stale',
+    ])
+  })
+})
+
 describe('sanitizeFtsQuery', () => {
   it('wraps bare tokens as quoted prefixes and AND-joins them', () => {
     expect(sanitizeFtsQuery('foo bar')).toBe('"foo"* AND "bar"*')
@@ -502,5 +654,9 @@ describe('sanitizeFtsQuery', () => {
     expect(sanitizeFtsQuery('a"b')).toBe('"a""b"*')
     expect(sanitizeFtsQuery('()')).toBe('')
     expect(sanitizeFtsQuery('   ')).toBe('')
+  })
+
+  it('leaves the reported query untouched (guard against accidental edits)', () => {
+    expect(sanitizeFtsQuery('orbit crm')).toBe('"orbit"* AND "crm"*')
   })
 })

@@ -2,6 +2,8 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as readline from 'node:readline'
 import { getProjectsDir, decodeProjectDirName, extractProjectName } from '../utils/claude-path'
+import { readTitleSource, resolveTitle } from './title-source'
+import { matchesTerms, tokenizeQuery } from './name-match'
 import {
   emptyIndexStats,
   type IndexStats,
@@ -44,33 +46,67 @@ export class NaiveSearchProvider implements SearchProvider {
       return { hits: [], total: 0, tookMs: Date.now() - start, provider: this.name }
     }
 
-    const hits: SearchHit[] = []
-
+    // Flatten first so name matches can be emitted ahead of body matches, the
+    // same precedence the SQLite provider gets from `tm DESC`. Without this a
+    // session renamed to a label that appears nowhere in its transcript is
+    // unfindable on machines with no native sqlite driver.
+    const entries: { sessionId: string; filePath: string; decodedPath: string; projectName: string }[] = []
     for (const dirName of projectDirs) {
-      if (hits.length >= limit) break
       const dirPath = path.join(projectsDir, dirName)
       const stat = fs.statSync(dirPath, { throwIfNoEntry: false })
       if (!stat?.isDirectory()) continue
 
-      const files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'))
       const decodedPath = decodeProjectDirName(dirName)
       const projectName = extractProjectName(decodedPath)
+      for (const file of fs.readdirSync(dirPath).filter((f) => f.endsWith('.jsonl'))) {
+        entries.push({
+          sessionId: file.replace('.jsonl', ''),
+          filePath: path.join(dirPath, file),
+          decodedPath,
+          projectName,
+        })
+      }
+    }
 
-      for (const file of files) {
+    const hits: SearchHit[] = []
+    const matchedIds = new Set<string>()
+
+    const { titles } = readTitleSource()
+    const terms = tokenizeQuery(input.query)
+    if (terms.length > 0) {
+      for (const entry of entries) {
         if (hits.length >= limit) break
-        const sessionId = file.replace('.jsonl', '')
-        const filePath = path.join(dirPath, file)
+        const title = resolveTitle(titles.get(entry.sessionId))
+        if (!title || !matchesTerms(title, terms)) continue
+        matchedIds.add(entry.sessionId)
+        const fileStat = fs.statSync(entry.filePath, { throwIfNoEntry: false })
+        hits.push({
+          sessionId: entry.sessionId,
+          projectPath: entry.decodedPath,
+          projectName: entry.projectName,
+          snippet: title,
+          timestamp: fileStat ? new Date(fileStat.mtimeMs).toISOString() : '',
+          blockType: 'title',
+          title,
+          titleMatch: true,
+        })
+      }
+    }
 
-        const found = await searchFile(filePath, query)
-        if (found) {
-          hits.push({
-            sessionId,
-            projectPath: decodedPath,
-            projectName,
-            snippet: found.snippet,
-            timestamp: found.timestamp,
-          })
-        }
+    for (const entry of entries) {
+      if (hits.length >= limit) break
+      if (matchedIds.has(entry.sessionId)) continue
+
+      const found = await searchFile(entry.filePath, query)
+      if (found) {
+        hits.push({
+          sessionId: entry.sessionId,
+          projectPath: entry.decodedPath,
+          projectName: entry.projectName,
+          snippet: found.snippet,
+          timestamp: found.timestamp,
+          title: resolveTitle(titles.get(entry.sessionId)),
+        })
       }
     }
 

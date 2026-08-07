@@ -189,6 +189,7 @@ export function SessionList() {
   const hiddenProjects = paginatedData?.hiddenProjects ?? []
   const hiddenSessions = paginatedData?.hiddenSessions ?? []
   const hiddenSessionOnlyCount = paginatedData?.hiddenSessionOnlyCount ?? 0
+  const hiddenMatchCount = paginatedData?.hiddenMatchCount ?? 0
   const totalHiddenCount = hiddenSessionCount + hiddenSessionOnlyCount
   const noActiveFilter = !search && status === 'all' && !project
   // Additive only. Swapping in a skeleton here would defeat keepPreviousData
@@ -245,6 +246,13 @@ export function SessionList() {
         >
           <div className="h-full w-1/3 animate-pulse rounded-full bg-brand-500" />
         </div>
+      )}
+
+      {search && hiddenMatchCount > 0 && (
+        <p data-testid="hidden-match-notice" className="mt-3 text-xs text-gray-500">
+          {hiddenMatchCount} of these matches {hiddenMatchCount === 1 ? 'is' : 'are'} in hidden
+          projects or hidden sessions.
+        </p>
       )}
 
       <div

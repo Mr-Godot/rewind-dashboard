@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import type { SessionSummary } from '@/lib/parsers/types'
 import type { SessionMetadataEntry, ProjectMetadataEntry } from '@/features/metadata/metadata.types'
+import type { SessionListItem } from './sessions.api'
 import { usePinSession, useRenameSession, useHideProject, useHideSession } from '@/features/metadata/useMetadataMutations'
 import { LaunchButton } from '@/components/LaunchButton'
 import { formatDuration, formatRelativeTime, formatDateTime, formatBytes, formatTokenCount } from '@/lib/utils/format'
@@ -133,7 +133,7 @@ function InlineRename({ sessionId, currentName, onClose }: { sessionId: string; 
 }
 
 interface SessionCardProps {
-  session: SessionSummary
+  session: SessionListItem
   metadata?: SessionMetadataEntry
   projectMeta?: ProjectMetadataEntry
 }
@@ -198,6 +198,11 @@ export function SessionCard({ session, metadata, projectMeta }: SessionCardProps
             {isHidden && (
               <span className="border border-gray-700 bg-gray-800/60 px-1.5 py-0.5 text-gray-400">
                 hidden
+              </span>
+            )}
+            {session.hiddenReason && (
+              <span className="border border-gray-800 bg-gray-900 px-1.5 py-0.5 text-gray-500">
+                {session.hiddenReason === 'project' ? 'hidden project' : 'hidden session'}
               </span>
             )}
           </div>

@@ -123,12 +123,22 @@ export function FullTextSearchResults({
             search={{ project: hit.projectPath }}
             className="block rounded-lg border border-gray-800 bg-gray-900/50 p-3 transition-all hover:border-gray-700 hover:bg-gray-900"
           >
+            {/* The name first: a card showing only a project, an id prefix and
+                a body snippet is unrecognisable as the session you renamed. */}
+            <p className="mb-1 truncate text-sm font-semibold text-matrix">
+              {hit.title || `Session ${hit.sessionId.slice(0, 8)}`}
+            </p>
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
                 <span className="rounded bg-blue-900/20 border border-blue-800/40 px-1.5 py-0.5 text-blue-300">
                   Project: {hit.projectName}
                 </span>
                 <span className="font-mono text-gray-500">{hit.sessionId.slice(0, 8)}</span>
+                {hit.titleMatch && (
+                  <span className="rounded border border-matrix/30 bg-matrix/10 px-1.5 py-0.5 text-matrix">
+                    name match
+                  </span>
+                )}
                 {(hit.matchCount ?? 0) > 1 && (
                   <span className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400">
                     {hit.matchCount} matches

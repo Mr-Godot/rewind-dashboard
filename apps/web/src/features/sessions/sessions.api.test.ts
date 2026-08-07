@@ -913,6 +913,159 @@ describe('paginateAndFilterSessions', () => {
     })
   })
 
+  describe('search reaches hidden sessions and tolerates separators', () => {
+    // The reported bug: every unfindable session lived in a hidden project, and
+    // the matcher was a raw substring test, so `orbit crm` could not match
+    // `orbit-crm-v2` even with hiding off.
+    const sessions = [
+      createMockSession({
+        sessionId: 'fee51982',
+        projectDir: 'C--Users-dev-OneDrive--LIVE-AGENTS',
+        projectName: 'AGENTS',
+        claudeName: 'orbit-crm-v2',
+        lastActiveAt: '2026-01-01T10:00:00Z',
+      }),
+      createMockSession({
+        sessionId: '5afc35a0',
+        projectDir: 'C--Users-dev-OneDrive--LIVE-AGENTS',
+        projectName: 'AGENTS',
+        claudeName: 'Brain-3',
+        lastActiveAt: '2026-01-02T10:00:00Z',
+      }),
+      createMockSession({
+        sessionId: '2a081304',
+        projectDir: '-dir-visible',
+        projectName: 'visible',
+        claudeName: null,
+        lastActiveAt: '2026-01-03T10:00:00Z',
+      }),
+      createMockSession({
+        sessionId: 'unrelated',
+        projectDir: '-dir-visible',
+        projectName: 'visible',
+        claudeName: 'unrelated',
+        lastActiveAt: '2026-01-04T10:00:00Z',
+      }),
+      createMockSession({
+        sessionId: 'bodyish',
+        projectDir: '-dir-visible',
+        projectName: 'visible',
+        claudeName: null,
+        firstUserMessage: 'can you fix the brain please',
+        lastActiveAt: '2026-06-01T10:00:00Z',
+      }),
+    ]
+    const metadata: Metadata = {
+      version: 2,
+      sessions: { '2a081304': { hidden: true, customName: 'brain-fix' } },
+      projects: { 'C--Users-dev-OneDrive--LIVE-AGENTS': { hidden: true } },
+    }
+    const base = {
+      page: 1,
+      pageSize: 50,
+      status: 'all' as const,
+      project: '',
+      sort: 'latest' as const,
+      starFirst: true,
+    }
+
+    async function run(search: string, over: Partial<typeof base> = {}) {
+      return paginateAndFilterSessions(sessions, { ...base, ...over, search }, metadata)
+    }
+
+    it('LITERAL REGRESSION: "orbit crm" finds orbit-crm-v2 inside a hidden project', async () => {
+      const result = await run('orbit crm')
+      expect(result.sessions.map((s) => s.sessionId)).toContain('fee51982')
+    })
+
+    it('LITERAL REGRESSION: "brain" finds every brain-named session, hidden or not', async () => {
+      const result = await run('brain')
+      const ids = result.sessions.map((s) => s.sessionId)
+      expect(ids).toContain('5afc35a0') // hidden project
+      expect(ids).toContain('2a081304') // individually hidden, customName brain-fix
+    })
+
+    it('accepts case and separator variations of the same name', async () => {
+      for (const q of ['ORBIT CRM', 'Orbit Crm', 'orbit-crm', 'orbit_crm', 'orb crm']) {
+        const result = await run(q)
+        expect(result.sessions.map((s) => s.sessionId), `query ${q}`).toContain('fee51982')
+      }
+    })
+
+    it('tags revealed rows and counts them', async () => {
+      const result = await run('orbit crm')
+      const row = result.sessions.find((s) => s.sessionId === 'fee51982')
+      expect(row?.hiddenReason).toBe('project')
+      expect(result.hiddenMatchCount).toBe(1)
+    })
+
+    it('does not drag in unrelated hidden sessions', async () => {
+      const result = await run('orbit crm')
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['fee51982'])
+    })
+
+    it('NO REGRESSION: an empty search still hides everything it used to', async () => {
+      const result = await run('')
+      const ids = result.sessions.map((s) => s.sessionId)
+      expect(ids).not.toContain('fee51982')
+      expect(ids).not.toContain('5afc35a0')
+      expect(ids).not.toContain('2a081304')
+      expect(result.hiddenMatchCount).toBe(0)
+      expect(result.sessions.every((s) => s.hiddenReason === undefined)).toBe(true)
+    })
+
+    it('ranks a name match above a first-message match under sort: latest', async () => {
+      // `bodyish` is the NEWEST session and would win on recency alone.
+      const result = await run('brain')
+      expect(result.sessions[0].sessionId).not.toBe('bodyish')
+      const ids = result.sessions.map((s) => s.sessionId)
+      expect(ids.indexOf('bodyish')).toBe(ids.length - 1)
+    })
+
+    it('does NOT apply rank to a literal sort', async () => {
+      const bySize = [
+        createMockSession({ sessionId: 'small', claudeName: 'brain', fileSizeBytes: 10 }),
+        createMockSession({ sessionId: 'big', firstUserMessage: 'brain dump', fileSizeBytes: 999 }),
+      ]
+      const result = await paginateAndFilterSessions(bySize, {
+        ...base,
+        search: 'brain',
+        sort: 'largest' as const,
+      })
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['big', 'small'])
+    })
+
+    it('finds every session in a project by its dir key', async () => {
+      const result = await run('agents')
+      const ids = result.sessions.map((s) => s.sessionId)
+      expect(ids).toContain('fee51982')
+      expect(ids).toContain('5afc35a0')
+      expect(result.sessions.every((s) => (s.matchRank ?? 9) <= 3)).toBe(true)
+    })
+
+    it('still finds a session by an id prefix', async () => {
+      const result = await run('fee51982')
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['fee51982'])
+    })
+
+    it('searches customName and claudeName as a union, not by precedence', async () => {
+      const both = [
+        createMockSession({ sessionId: 'dual', claudeName: 'beta' }),
+        createMockSession({ sessionId: 'other', claudeName: 'zzz' }),
+      ]
+      const meta: Metadata = {
+        version: 2,
+        sessions: { dual: { customName: 'alpha' } },
+        projects: {},
+      }
+
+      for (const q of ['alpha', 'beta']) {
+        const result = await paginateAndFilterSessions(both, { ...base, search: q }, meta)
+        expect(result.sessions.map((s) => s.sessionId), `query ${q}`).toEqual(['dual'])
+      }
+    })
+  })
+
   describe('a waiting session is live but NOT active', () => {
     // isActive is load-bearing in four places. A waiting (live but idle)
     // session carries isActive:false, so none of them must fire for it.

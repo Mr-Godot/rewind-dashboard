@@ -1066,6 +1066,129 @@ describe('paginateAndFilterSessions', () => {
     })
   })
 
+  describe('binary name-match grouping sorts by date within the group (issue: Brain sessions not by recency)', () => {
+    const base = {
+      page: 1,
+      pageSize: 50,
+      status: 'all' as const,
+      project: '',
+      sort: 'latest' as const,
+      starFirst: true,
+    }
+
+    it('USER BUG: Brain, brain-fix, agent-brain all rank as name matches and must sort newest first', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'brain', claudeName: 'Brain', lastActiveAt: '2026-01-01T10:00:00Z' }),
+        createMockSession({ sessionId: 'brain-fix', claudeName: 'brain-fix', lastActiveAt: '2026-01-02T10:00:00Z' }),
+        createMockSession({ sessionId: 'agent-brain', claudeName: 'agent-brain', lastActiveAt: '2026-01-03T10:00:00Z' }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' })
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['agent-brain', 'brain-fix', 'brain'])
+    })
+
+    it('a name match still outranks a much newer body-only match', async () => {
+      const sessions = [
+        createMockSession({
+          sessionId: 'name-match',
+          claudeName: 'brain',
+          lastActiveAt: '2026-01-01T10:00:00Z',
+        }),
+        createMockSession({
+          sessionId: 'body-only',
+          claudeName: null,
+          firstUserMessage: 'please fix the brain module',
+          lastActiveAt: '2026-06-01T10:00:00Z',
+        }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' })
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['name-match', 'body-only'])
+    })
+
+    it('two body-only matches sort newest first relative to each other', async () => {
+      const sessions = [
+        createMockSession({
+          sessionId: 'older-body',
+          claudeName: null,
+          firstUserMessage: 'brain dump one',
+          lastActiveAt: '2026-01-01T10:00:00Z',
+        }),
+        createMockSession({
+          sessionId: 'newer-body',
+          claudeName: null,
+          firstUserMessage: 'brain dump two',
+          lastActiveAt: '2026-01-05T10:00:00Z',
+        }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' })
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['newer-body', 'older-body'])
+    })
+
+    it('active sessions still pin to the top regardless of match kind or date', async () => {
+      const sessions = [
+        createMockSession({
+          sessionId: 'inactive-name-match',
+          claudeName: 'brain',
+          lastActiveAt: '2026-06-01T10:00:00Z',
+        }),
+        createMockSession({
+          sessionId: 'active-body-only',
+          claudeName: null,
+          firstUserMessage: 'brain dump',
+          lastActiveAt: '2026-01-01T10:00:00Z',
+          isActive: true,
+        }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' })
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['active-body-only', 'inactive-name-match'])
+    })
+
+    it('starFirst pinning still beats date within the same match group', async () => {
+      const sessions = [
+        createMockSession({ sessionId: 'pinned-older', claudeName: 'brain', lastActiveAt: '2026-01-01T10:00:00Z' }),
+        createMockSession({ sessionId: 'unpinned-newer', claudeName: 'brain-2', lastActiveAt: '2026-06-01T10:00:00Z' }),
+      ]
+      const metadata: Metadata = {
+        version: 2,
+        sessions: { 'pinned-older': { pinned: true } },
+        projects: {},
+      }
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' }, metadata)
+
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['pinned-older', 'unpinned-newer'])
+    })
+
+    it('a tier-3 project-name match is not a name match, and groups with the non-name matches', async () => {
+      const sessions = [
+        createMockSession({
+          sessionId: 'project-match',
+          claudeName: null,
+          projectName: 'brain-project',
+          lastActiveAt: '2026-01-01T10:00:00Z',
+        }),
+        createMockSession({
+          sessionId: 'older-name-match',
+          claudeName: 'brain',
+          lastActiveAt: '2025-01-01T10:00:00Z',
+        }),
+      ]
+
+      const result = await paginateAndFilterSessions(sessions, { ...base, search: 'brain' })
+
+      // The name match wins the group despite being far older.
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['older-name-match', 'project-match'])
+      expect(result.sessions.find((s) => s.sessionId === 'project-match')?.matchRank).toBe(3)
+    })
+  })
+
   describe('a waiting session is live but NOT active', () => {
     // isActive is load-bearing in four places. A waiting (live but idle)
     // session carries isActive:false, so none of them must fire for it.

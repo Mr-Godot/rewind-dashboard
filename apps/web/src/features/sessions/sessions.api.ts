@@ -6,6 +6,9 @@ import { readMetadataMigrated } from '@/features/metadata/metadata.api'
 import type { Metadata } from '@/features/metadata/metadata.types'
 import { tokenizeQuery, rankSessionMatch, type NameRank } from '@/lib/search/name-match'
 
+/** Highest `NameRank` that still counts as a name match (0-2 are the name tiers). */
+const NAME_MATCH_MAX_RANK = 2
+
 export const getSessionList = createServerFn({ method: 'GET' }).handler(
   async () => {
     return scanAllSessions()
@@ -237,11 +240,14 @@ export async function paginateAndFilterSessions(
       if (aActive !== bActive) return bActive - aActive
 
       // A name match outranks a body match: a session with 802 turns can no
-      // longer bury the session whose name is exactly what was typed.
+      // longer bury the session whose name is exactly what was typed. The
+      // grouping is BINARY on purpose: inside a group recency decides, so
+      // `Brain`, `brain-fix` and `agent-brain` sort by date against each other
+      // instead of by how closely each name matched.
       if (terms.length > 0) {
-        const aRank = ranked.get(a.sessionId) ?? 9
-        const bRank = ranked.get(b.sessionId) ?? 9
-        if (aRank !== bRank) return aRank - bRank
+        const aName = (ranked.get(a.sessionId) ?? 9) <= NAME_MATCH_MAX_RANK ? 1 : 0
+        const bName = (ranked.get(b.sessionId) ?? 9) <= NAME_MATCH_MAX_RANK ? 1 : 0
+        if (aName !== bName) return bName - aName
       }
 
       if (starFirst) {

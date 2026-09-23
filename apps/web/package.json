@@ -1,9 +1,9 @@
 {
   "name": "rewind-dashboard",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Local dashboard for Claude Code sessions — find, manage, and launch",
   "type": "module",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Godot Huard",
   "homepage": "https://github.com/mr-godot/rewind-dashboard",
   "repository": {

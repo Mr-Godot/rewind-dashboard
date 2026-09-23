@@ -1,5 +1,7 @@
 # Rewind
 
+> **Status: no longer maintained (September 2026).** The code stays public so you can use it, study it or fork it. Issues and pull requests are not monitored.
+
 **Your Claude Code sessions deserve better than `~/.claude/projects/`.**
 
 A local dashboard for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) power users who've accumulated more sessions than they can remember. Browse, search, star, rename, and launch past sessions from a clean web UI. See what's actively running, what it cost you, and which project quietly consumed 3.2M tokens at 3am.
@@ -279,4 +281,9 @@ Built on [claude-session-dashboard](https://github.com/dlupiak/claude-session-da
 
 ## License
 
-[MIT](LICENSE) © 2026 Godot Huard.
+Rewind is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) © 2026 Godot Huard. You may use, change and share it for any noncommercial purpose. Commercial use is not allowed.
+
+Two parts stay under the [MIT License](LICENSE-MIT):
+
+1. The original [claude-session-dashboard](https://github.com/dlupiak/claude-session-dashboard) code by Dmytro Lupiak.
+2. Rewind releases up to and including v1.6.0, which were published under MIT.

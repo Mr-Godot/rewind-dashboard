@@ -2,6 +2,10 @@
 
 ## v1.7.0
 
+### Changed
+- **License**: Rewind is now licensed under the PolyForm Noncommercial License 1.0.0 (no commercial use). The original claude-session-dashboard code and releases up to v1.6.0 remain under MIT (see LICENSE-MIT)
+- **Project status**: Rewind is no longer maintained. This is the final release
+
 ### Added
 - **Choose which terminal Launch opens**: the first time you click Launch, Rewind asks which terminal to use and lists only the ones actually installed on your machine, instead of picking one silently. Change it later from the gear icon next to Launch or from the Settings page. The choice is stored per platform, so a synced settings file does not let two machines overwrite each other's answer (#72)
 - **Hide a single session**: hiding used to be a project-only action, so removing one noisy session meant hiding the whole folder it lived in. Sessions now have their own hide control on the session card and on the session detail page, independent of the project flag in both directions. The hidden banner counts sessions inside hidden projects separately from sessions hidden one by one, so the two no longer overlap (#71)
